@@ -1,0 +1,331 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { RpcContext } from '../../../core'
+import { createOrchestrationRpcHarness } from '../rpc-test-harness'
+import type { OrchestrationDb } from '../../../../orchestration/db'
+import type { OrcaRuntimeService } from '../../../../orca-runtime'
+import type { RuntimeTerminalSummary } from '../../../../../../shared/runtime-types'
+import { createRootDispatch } from '../../../../orchestration/db/root-dispatch-test-fixture'
+
+// Group addresses mean the sender's Run. The host-wide meaning they had before let one
+// coordinator's `@all` reach every terminal in every open project on the machine.
+describe('orchestration.send group addresses', () => {
+  const h = createOrchestrationRpcHarness()
+  const { coordinatorPaneKey } = h
+  let db: OrchestrationDb
+  let runtime: OrcaRuntimeService
+  let ctx: RpcContext
+  let activeRunId: string | undefined
+
+  function setup(withBoundRun = true): void {
+    ;({ db, runtime, ctx, activeRunId } = h.setup(withBoundRun))
+  }
+
+  afterEach(() => {
+    h.cleanup()
+  })
+
+  async function call(name: string, params: Record<string, unknown>) {
+    return h.call(name, params, ctx)
+  }
+
+  function makeSummary(
+    handle: string,
+    opts: Partial<RuntimeTerminalSummary> = {}
+  ): RuntimeTerminalSummary {
+    return {
+      handle,
+      ptyId: opts.ptyId ?? handle,
+      worktreeId: opts.worktreeId ?? 'wt_default',
+      worktreePath: opts.worktreePath ?? '/tmp/wt',
+      branch: opts.branch ?? 'main',
+      tabId: opts.tabId ?? 'tab_1',
+      leafId: opts.leafId ?? handle,
+      title: opts.title ?? null,
+      connected: opts.connected ?? true,
+      writable: opts.writable ?? true,
+      lastOutputAt: opts.lastOutputAt ?? null,
+      preview: opts.preview ?? '',
+      // Why spread: absent `agentIdentity` means unknown, so the helper must be able to
+      // produce a summary that genuinely lacks the field.
+      ...(opts.agentIdentity ? { agentIdentity: opts.agentIdentity } : {})
+    }
+  }
+
+  function setupWithTerminals(
+    terminals: RuntimeTerminalSummary[],
+    agentStatuses?: Record<string, string>
+  ): void {
+    setup()
+    vi.spyOn(runtime, 'listTerminals').mockResolvedValue({
+      terminals,
+      totalCount: terminals.length,
+      truncated: false
+    })
+    vi.mocked(runtime.getTerminalPaneKey).mockImplementation((handle) => {
+      if (handle === 'term_coord') {
+        return coordinatorPaneKey
+      }
+      const terminal = terminals.find((candidate) => candidate.handle === handle)
+      return terminal ? `${terminal.tabId}:${terminal.leafId}` : null
+    })
+    vi.spyOn(runtime, 'getAgentStatusForHandle').mockImplementation(
+      (handle: string) => agentStatuses?.[handle] ?? null
+    )
+  }
+
+  /** A live worker Dispatch in `runId` whose terminal is `handle`. */
+  function dispatchWorker(handle: string, runId = activeRunId!): string {
+    const task = db.createTask({ spec: `work for ${handle}`, runId })
+    return createRootDispatch(db, task.id, handle).id
+  }
+
+  type GroupReceipt = {
+    messages: { to_handle: string; run_id: string; thread_id: string }[]
+    recipients: number
+    warnings?: { code: string; recipient: string }[]
+  }
+
+  it('fans out @all to the live Dispatches of the sender Run and nothing else', async () => {
+    // The defect this pins: a coordinator meaning "my three reviewers" reached 126 agents
+    // across every open project, because @all enumerated every terminal on the host.
+    setupWithTerminals([
+      makeSummary('term_coord'),
+      makeSummary('term_a'),
+      makeSummary('term_b'),
+      makeSummary('term_other_project'),
+      makeSummary('term_plain_pane')
+    ])
+    const dispatchA = dispatchWorker('term_a')
+    const dispatchB = dispatchWorker('term_b')
+    const otherRun = db.createRun({
+      objective: 'Another project',
+      coordinatorHandle: 'term_other_coord',
+      coordinatorPaneKey: 'tab_other:leaf_other'
+    })
+    dispatchWorker('term_other_project', otherRun.id)
+
+    const result = (await call('orchestration.send', {
+      from: 'term_coord',
+      to: '@all',
+      subject: 'broadcast'
+    })) as GroupReceipt
+
+    expect(result.recipients).toBe(2)
+    expect(result.messages.map((m) => m.to_handle).sort()).toEqual(
+      [`dispatch:${dispatchA}`, `dispatch:${dispatchB}`].sort()
+    )
+    expect(result.messages.every((m) => m.run_id === activeRunId)).toBe(true)
+    expect(result.warnings).toBeUndefined()
+    expect(db.getInbox(100)).toHaveLength(2)
+  })
+
+  it('leaves settled Dispatches out of @all', async () => {
+    setupWithTerminals([makeSummary('term_coord'), makeSummary('term_a'), makeSummary('term_b')])
+    const live = dispatchWorker('term_a')
+    db.completeDispatch(dispatchWorker('term_b'))
+
+    const result = (await call('orchestration.send', {
+      from: 'term_coord',
+      to: '@all',
+      subject: 'only the living'
+    })) as GroupReceipt
+
+    expect(result.messages.map((m) => m.to_handle)).toEqual([`dispatch:${live}`])
+  })
+
+  it('reaches a Dispatch whose worker terminal is not attached yet', async () => {
+    // Durable delivery: the mailbox exists before the terminal does.
+    setupWithTerminals([makeSummary('term_coord')])
+    const started = db.createStartingWorkerDispatch({
+      taskSpec: 'starting worker',
+      taskRunId: activeRunId,
+      startOptions: {},
+      creator: { kind: 'system' },
+      maxDepth: Number.MAX_SAFE_INTEGER
+    })
+
+    const result = (await call('orchestration.send', {
+      from: 'term_coord',
+      to: '@all',
+      subject: 'early guidance'
+    })) as GroupReceipt
+
+    expect(result.messages.map((m) => m.to_handle)).toEqual([`dispatch:${started.dispatch.id}`])
+  })
+
+  it('lets a worker address its Run siblings with @all, excluding itself', async () => {
+    setupWithTerminals([makeSummary('term_coord'), makeSummary('term_a'), makeSummary('term_b')])
+    dispatchWorker('term_a')
+    const sibling = dispatchWorker('term_b')
+
+    const result = (await call('orchestration.send', {
+      from: 'term_a',
+      to: '@all',
+      subject: 'sibling ping'
+    })) as GroupReceipt
+
+    expect(result.messages.map((m) => m.to_handle)).toEqual([`dispatch:${sibling}`])
+  })
+
+  it.each(['@all', '@idle', '@codex'])(
+    'rejects %s from a sender in no Run, naming the durable alternatives',
+    async (to) => {
+      setup(false)
+      const listTerminals = vi.spyOn(runtime, 'listTerminals')
+      vi.mocked(runtime.getTerminalPaneKey).mockImplementation((handle) =>
+        handle === 'term_loner' ? 'tab_loner:leaf_loner' : null
+      )
+
+      await expect(
+        call('orchestration.send', { from: 'term_loner', to, subject: 'anyone?' })
+      ).rejects.toMatchObject({
+        code: 'invalid_argument',
+        message: expect.stringMatching(/run:<id> or dispatch:<id>/)
+      })
+
+      // No host-wide fallback: the host's terminals are never even enumerated.
+      expect(listTerminals).not.toHaveBeenCalled()
+      expect(db.getInbox(100)).toHaveLength(0)
+    }
+  )
+
+  it('rejects @all from a bound coordinator whose Run has no live Dispatch', async () => {
+    setupWithTerminals([makeSummary('term_coord'), makeSummary('term_bystander')])
+
+    await expect(
+      call('orchestration.send', { from: 'term_coord', to: '@all', subject: 'nobody home' })
+    ).rejects.toThrow('No recipients resolved for group address')
+    expect(db.getInbox(100)).toHaveLength(0)
+  })
+
+  it('continues to fan out status messages to groups', async () => {
+    setupWithTerminals([makeSummary('term_coord'), makeSummary('term_a'), makeSummary('term_b')])
+    const dispatchA = dispatchWorker('term_a')
+    const dispatchB = dispatchWorker('term_b')
+
+    const result = (await call('orchestration.send', {
+      from: 'term_coord',
+      to: '@all',
+      subject: 'status broadcast',
+      type: 'status'
+    })) as { messages: { to_handle: string; type: string }[]; recipients: number }
+
+    expect(result.recipients).toBe(2)
+    expect(result.messages.map((m) => m.to_handle).sort()).toEqual(
+      [`dispatch:${dispatchA}`, `dispatch:${dispatchB}`].sort()
+    )
+    expect(result.messages.every((m) => m.type === 'status')).toBe(true)
+  })
+
+  it('fans out @idle to only the idle Dispatches of the Run', async () => {
+    setupWithTerminals(
+      [
+        makeSummary('term_coord'),
+        makeSummary('term_a'),
+        makeSummary('term_b'),
+        makeSummary('term_idle_elsewhere')
+      ],
+      { term_a: 'idle', term_b: 'busy', term_idle_elsewhere: 'idle' }
+    )
+    const idle = dispatchWorker('term_a')
+    dispatchWorker('term_b')
+
+    const result = (await call('orchestration.send', {
+      from: 'term_coord',
+      to: '@idle',
+      subject: 'idle check'
+    })) as GroupReceipt
+
+    expect(result.recipients).toBe(1)
+    expect(result.messages[0].to_handle).toBe(`dispatch:${idle}`)
+  })
+
+  it('fans out an agent name group by host-resolved identity within the Run', async () => {
+    setupWithTerminals([
+      makeSummary('term_coord', { agentIdentity: 'claude' }),
+      makeSummary('term_a', { agentIdentity: 'codex' }),
+      makeSummary('term_b', { agentIdentity: 'claude' }),
+      makeSummary('term_codex_elsewhere', { agentIdentity: 'codex' })
+    ])
+    const codex = dispatchWorker('term_a')
+    dispatchWorker('term_b')
+
+    const result = (await call('orchestration.send', {
+      from: 'term_coord',
+      to: '@codex',
+      subject: 'codex only'
+    })) as GroupReceipt
+
+    expect(result.recipients).toBe(1)
+    expect(result.messages[0].to_handle).toBe(`dispatch:${codex}`)
+  })
+
+  it('fans out @droid without claiming a pane whose title merely contains the word', async () => {
+    setupWithTerminals([
+      makeSummary('term_coord', { agentIdentity: 'codex' }),
+      makeSummary('term_b', { agentIdentity: 'droid' }),
+      // Why kept: "Android build" contains `droid` as a substring. It was excluded before by
+      // whole-token matching and is excluded now because its identity is not droid.
+      makeSummary('term_c', { agentIdentity: 'claude', title: 'Android build' })
+    ])
+    const droid = dispatchWorker('term_b')
+    dispatchWorker('term_c')
+
+    const result = (await call('orchestration.send', {
+      from: 'term_coord',
+      to: '@droid',
+      subject: 'droid only'
+    })) as GroupReceipt
+
+    expect(result.recipients).toBe(1)
+    expect(result.messages[0].to_handle).toBe(`dispatch:${droid}`)
+  })
+
+  it('fans out @worktree:<id> to matching worktree terminals, unchanged by Run scoping', async () => {
+    setupWithTerminals([
+      makeSummary('term_a', { worktreeId: 'wt_1' }),
+      makeSummary('term_b', { worktreeId: 'wt_1' }),
+      makeSummary('term_c', { worktreeId: 'wt_2' })
+    ])
+
+    const result = (await call('orchestration.send', {
+      from: 'term_a',
+      to: '@worktree:wt_1',
+      subject: 'worktree msg'
+    })) as GroupReceipt
+
+    expect(result.recipients).toBe(1)
+    expect(result.messages[0].to_handle).toBe('term_b')
+  })
+
+  it('shares thread_id across fan-out messages', async () => {
+    setupWithTerminals([makeSummary('term_coord'), makeSummary('term_a'), makeSummary('term_b')])
+    dispatchWorker('term_a')
+    dispatchWorker('term_b')
+
+    const result = (await call('orchestration.send', {
+      from: 'term_coord',
+      to: '@all',
+      subject: 'threaded',
+      threadId: 'my_thread'
+    })) as GroupReceipt
+
+    expect(result.messages[0].thread_id).toBe('my_thread')
+    expect(result.messages[1].thread_id).toBe('my_thread')
+  })
+
+  it('generates a shared thread_id when none provided', async () => {
+    setupWithTerminals([makeSummary('term_coord'), makeSummary('term_a'), makeSummary('term_b')])
+    dispatchWorker('term_a')
+    dispatchWorker('term_b')
+
+    const result = (await call('orchestration.send', {
+      from: 'term_coord',
+      to: '@all',
+      subject: 'auto thread'
+    })) as GroupReceipt
+
+    expect(result.messages[0].thread_id).toMatch(/^thread_/)
+    expect(result.messages[0].thread_id).toBe(result.messages[1].thread_id)
+  })
+})

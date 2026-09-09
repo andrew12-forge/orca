@@ -40,8 +40,11 @@ capability arguments in its preamble. `check` is the exception: it identifies
 its caller with `--terminal`, never `--from`.
 
 Group addresses include `@all`, `@idle`, `@claude`, `@codex`, `@opencode`,
-`@gemini`, `@droid`, `@grok`, `@cursor`, and `@worktree:<id>`. Use them only for
-intentional fan-out status or questions. `worker_done`, heartbeat, and other
+`@gemini`, `@droid`, `@grok`, `@cursor`, and `@worktree:<id>`. Every group but
+`@worktree:<id>` means the live Dispatches of the sender's own Run, delivered
+to each `dispatch:<id>` mailbox; a sender bound to no Run is refused and must
+name `run:<id>` or `dispatch:<id>`. Use them only for intentional fan-out
+status or questions. `worker_done`, heartbeat, and other
 Dispatch lifecycle messages never target groups.
 
 ## Questions and gates
