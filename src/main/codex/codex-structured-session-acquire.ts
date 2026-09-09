@@ -146,6 +146,9 @@ export async function acquireCodexStructuredSession(input: {
               error,
               prompts: acquisition.prompts,
               onBackgroundTasksChanged: deps.onBackgroundTasksChanged,
+              // An unexpected death orphans the naming child too; shutdown
+              // still has to prove that one stopped.
+              namingOrphans,
               ...(deps.onEvent ? { onEvent: deps.onEvent } : {})
             })
           } finally {
