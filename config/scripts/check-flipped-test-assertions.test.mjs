@@ -3,17 +3,17 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
+import { hasUserVisibleChangeSection, main } from './check-flipped-test-assertions.mjs'
 import {
   collectFindings,
   extractTestTitles,
+  findDisabledTests,
   findEmptiedExpectations,
   findFlippedToFailure,
   findRenamedTests,
-  hasUserVisibleChangeSection,
   isScopedTestFile,
-  main,
   parseUnifiedDiffHunks
-} from './check-flipped-test-assertions.mjs'
+} from './test-expectation-flip-heuristics.mjs'
 
 const projectDir = resolve(import.meta.dirname, '../..')
 const prWorkflow = parseYaml(readFileSync(join(projectDir, '.github/workflows/pr.yml'), 'utf8'))
@@ -229,19 +229,123 @@ describe('renamed test heuristic', () => {
     expect(findRenamedTests(hunk)).toHaveLength(1)
   })
 
-  it('reads it() and test.describe() titles too', () => {
+  it('reads it(), describe() and test.describe() titles, and marks the disabled ones', () => {
     expect(
       extractTestTitles([
         { line: 1, text: "  it('does a thing', () => {" },
         { line: 2, text: "  test.describe('a suite', () => {" },
         { line: 3, text: "  test.skip('skipped', () => {" },
-        { line: 4, text: '  const unrelated = 1' }
+        { line: 4, text: "  describe.skip('a skipped suite', () => {" },
+        { line: 5, text: "  it.only('focused', () => {" },
+        { line: 6, text: '  const unrelated = 1' }
       ])
     ).toEqual([
-      { line: 1, title: 'does a thing' },
-      { line: 2, title: 'a suite' },
-      { line: 3, title: 'skipped' }
+      { line: 1, title: 'does a thing', text: "  it('does a thing', () => {", disabled: false },
+      { line: 2, title: 'a suite', text: "  test.describe('a suite', () => {", disabled: false },
+      { line: 3, title: 'skipped', text: "  test.skip('skipped', () => {", disabled: true },
+      {
+        line: 4,
+        title: 'a skipped suite',
+        text: "  describe.skip('a skipped suite', () => {",
+        disabled: true
+      },
+      // `.only` narrows a run; it does not stop asserting, so it is not a disable.
+      { line: 5, title: 'focused', text: "  it.only('focused', () => {", disabled: false }
     ])
+  })
+})
+
+describe('disabled-test heuristic', () => {
+  it.each([
+    ["+  test.skip('keeps unbound direct mail durable', async () => {", 'test.skip'],
+    ["+  test.fixme('keeps unbound direct mail durable', async () => {", 'test.fixme'],
+    ["+  it.skip('keeps unbound direct mail durable', async () => {", 'it.skip']
+  ])('flags an existing test turned into %s', (added) => {
+    const [hunk] = parseUnifiedDiffHunks(
+      diffOf('tests/e2e/a.spec.ts', '@@ -3 +3 @@', [
+        "-  test('keeps unbound direct mail durable', async () => {",
+        added
+      ])
+    )
+
+    expect(findDisabledTests(hunk)).toEqual([
+      {
+        file: 'tests/e2e/a.spec.ts',
+        line: 3,
+        kind: 'test disabled',
+        removed: "test('keeps unbound direct mail durable', async () => {",
+        added: added.slice(1).trim()
+      }
+    ])
+  })
+
+  it('flags a describe turned into describe.skip', () => {
+    const [hunk] = parseUnifiedDiffHunks(
+      diffOf('src/main/runtime/rpc/methods/orchestration/send.test.ts', '@@ -3 +3 @@', [
+        "-describe('unbound send', () => {",
+        "+describe.skip('unbound send', () => {"
+      ])
+    )
+
+    expect(findDisabledTests(hunk)).toHaveLength(1)
+  })
+
+  // The title can sit on its own line when the call is wrapped, so the removed side is
+  // matched on text as well as on an extracted title.
+  it('flags a skip whose predecessor line only mentions the title', () => {
+    const [hunk] = parseUnifiedDiffHunks(
+      diffOf('tests/e2e/a.spec.ts', '@@ -3,2 +3 @@', [
+        '-  test(',
+        "-    'keeps unbound direct mail durable',",
+        "+  test.skip('keeps unbound direct mail durable', async () => {"
+      ])
+    )
+
+    expect(findDisabledTests(hunk)).toHaveLength(1)
+  })
+
+  // Re-enabling a test is the direction that adds coverage back.
+  it('does not flag unskipping', () => {
+    const [hunk] = parseUnifiedDiffHunks(
+      diffOf('tests/e2e/a.spec.ts', '@@ -3 +3 @@', [
+        "-  test.skip('keeps unbound direct mail durable', async () => {",
+        "+  test('keeps unbound direct mail durable', async () => {"
+      ])
+    )
+
+    expect(findDisabledTests(hunk)).toEqual([])
+  })
+
+  it('does not flag a brand new skipped test', () => {
+    const [hunk] = parseUnifiedDiffHunks(
+      diffOf('tests/e2e/a.spec.ts', '@@ -3,0 +4 @@', [
+        "+  test.skip('a case nobody has written yet', async () => {})"
+      ])
+    )
+
+    expect(findDisabledTests(hunk)).toEqual([])
+  })
+
+  it('does not flag dropping .only, which re-widens the run', () => {
+    const [hunk] = parseUnifiedDiffHunks(
+      diffOf('tests/e2e/a.spec.ts', '@@ -3 +3 @@', [
+        "-  test.only('keeps unbound direct mail durable', async () => {",
+        "+  test('keeps unbound direct mail durable', async () => {"
+      ])
+    )
+
+    expect(findDisabledTests(hunk)).toEqual([])
+  })
+
+  it('does not double-report a skip as a rename', () => {
+    const [hunk] = parseUnifiedDiffHunks(
+      diffOf('tests/e2e/a.spec.ts', '@@ -3 +3 @@', [
+        "-  test('keeps unbound direct mail durable', async () => {",
+        "+  test.skip('keeps unbound direct mail durable', async () => {"
+      ])
+    )
+
+    expect(findRenamedTests(hunk)).toEqual([])
   })
 })
 
