@@ -262,6 +262,8 @@ async function install(deps: StructuredAgentSessionRuntimeDeps): Promise<Install
       readNamingAttempted: (sessionId) => conversationNames.read(sessionId).namingAttempted,
       markNamingAttempted: (sessionId) => void conversationNames.markAttempted(sessionId),
       onNamingError: (scope, error) => warnConversationNamingFailed(scope, error),
+      onBackgroundTasksChanged: (sessionId, state) =>
+        host?.publishBackgroundTaskState(sessionId, state),
       onEvent: (event) => {
         if (event.type !== 'ended' || !('cause' in event) || event.cause !== 'unexpected-exit') {
           return

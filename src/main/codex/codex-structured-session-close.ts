@@ -4,6 +4,7 @@ import {
   cancelCodexAcquisitionAttempt,
   type CodexAcquisitionRegistry,
   type CodexSession,
+  type CodexStructuredSessionAdapterDeps,
   type CodexStructuredSessionEvent
 } from './codex-structured-session-state'
 import type { StructuredAgentSessionLifecycleEvent } from '../native-chat/agent-session-wire/structured-agent-session-adapter'
@@ -16,6 +17,7 @@ export function handleCodexSessionExit(input: {
   prompts?: CodexSession['prompts']
   allowFailedSettlement?: boolean
   onEvent?: (event: CodexStructuredSessionEvent) => void
+  onBackgroundTasksChanged?: CodexStructuredSessionAdapterDeps['onBackgroundTasksChanged']
 }): boolean {
   const session = input.sessions.get(input.sessionId)
   if (!session || session.connection !== input.connection || session.ended) {
@@ -45,6 +47,8 @@ export function handleCodexSessionExit(input: {
   session.ended = true
   // The session retains an unproven child so explicit close can retry its teardown.
   void session.naming?.close().catch(() => false)
+  session.backgroundTasks.clear()
+  input.onBackgroundTasksChanged?.(input.sessionId, null)
   session.unbindReadingControl?.()
   input.onEvent?.(event)
   session.prompts.clear()

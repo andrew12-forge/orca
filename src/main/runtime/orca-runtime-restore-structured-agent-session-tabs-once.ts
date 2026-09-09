@@ -155,9 +155,9 @@ export class OrcaRuntimeWithRestoreStructuredAgentSessionTabsOnce extends OrcaRu
           ...(conversationName && tab.id === id ? { title: conversationName } : {})
         }))
       }
-      this.storeMobileSessionSnapshot(input.workspaceId, snapshot)
+      const stored = this.storeMobileSessionSnapshot(input.workspaceId, snapshot)
       if (input.notify !== false) {
-        this.emitMobileSessionTabsSnapshot(snapshot)
+        this.emitMobileSessionTabsSnapshot(stored)
       }
       return
     }
@@ -205,9 +205,9 @@ export class OrcaRuntimeWithRestoreStructuredAgentSessionTabsOnce extends OrcaRu
       ...(existing?.tabGroupLayout ? { tabGroupLayout: existing.tabGroupLayout } : {}),
       tabs
     }
-    this.storeMobileSessionSnapshot(input.workspaceId, snapshot)
+    const stored = this.storeMobileSessionSnapshot(input.workspaceId, snapshot)
     if (input.notify !== false) {
-      this.emitMobileSessionTabsSnapshot(snapshot)
+      this.emitMobileSessionTabsSnapshot(stored)
     }
   }
 
