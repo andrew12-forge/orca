@@ -34,6 +34,17 @@ const TAGS = [
   { tag: 'v1.4.199', dispatchArguments: 'params', attachmentCarriesRunId: true }
 ]
 
+/**
+ * Two databases per tag, because the same release wrote two on-disk states that migrate down
+ * different paths. With unbound direct mail, tags up to v1.4.198 file it under the legacy Run and
+ * the skew probe replays the chain from the v6 floor. Without it, the stored stamp is trusted and
+ * only the tail migrations run — the path most users are actually on.
+ */
+const VARIANTS = [
+  { variant: 'unbound-mail', suffix: '', includeUnboundDirectMail: true },
+  { variant: 'no-unbound-mail', suffix: '-no-unbound-mail', includeUnboundDirectMail: false }
+]
+
 function git(args, cwd = REPO_ROOT) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true })
   if (result.status !== 0) {
@@ -76,38 +87,46 @@ async function populateAtTag({ tag, dispatchArguments, attachmentCarriesRunId })
       outfile: bundle,
       logLevel: 'warning'
     })
-    const dbPath = join(scratch, 'orchestration.db')
-    const expectedPath = join(scratch, 'expected.json')
-    const shape = JSON.stringify({ dispatchArguments, attachmentCarriesRunId })
-    const run = spawnSync(process.execPath, [bundle, dbPath, shape, expectedPath], {
-      cwd: worktree,
-      encoding: 'utf8',
-      windowsHide: true
-    })
-    if (run.status !== 0) {
-      throw new Error(`populate at ${tag} failed: ${run.stderr || run.stdout}`)
-    }
-    const expected = JSON.parse(readFileSync(expectedPath, 'utf8'))
-    const target = join(FIXTURE_DIR, `${tag}.sqlite`)
-    copyFileSync(dbPath, target)
-    // OrchestrationDb hardens its file to 0600; a checkout produces 0644, so match the checkout.
-    chmodSync(target, 0o644)
-    return {
-      tag,
-      commit: git(['rev-list', '-n', '1', tag]),
-      userVersion: expected.userVersion,
-      populateShape: { dispatchArguments, attachmentCarriesRunId },
-      sha256: createHash('sha256').update(readFileSync(target)).digest('hex'),
-      expected: {
-        runIds: expected.runIds,
-        taskIds: expected.taskIds,
-        dispatchIds: expected.dispatchIds,
-        messages: expected.messages,
-        legacyAdoptionsCount: expected.legacyAdoptionsCount,
-        attachments: expected.attachments,
-        tableRowCounts: expected.tableRowCounts
+    const commit = git(['rev-list', '-n', '1', tag])
+    const written = []
+    for (const { variant, suffix, includeUnboundDirectMail } of VARIANTS) {
+      const dbPath = join(scratch, `orchestration-${variant}.db`)
+      const expectedPath = join(scratch, `expected-${variant}.json`)
+      const populateShape = { dispatchArguments, attachmentCarriesRunId, includeUnboundDirectMail }
+      const run = spawnSync(
+        process.execPath,
+        [bundle, dbPath, JSON.stringify(populateShape), expectedPath],
+        { cwd: worktree, encoding: 'utf8', windowsHide: true }
+      )
+      if (run.status !== 0) {
+        throw new Error(`populate ${variant} at ${tag} failed: ${run.stderr || run.stdout}`)
       }
+      const expected = JSON.parse(readFileSync(expectedPath, 'utf8'))
+      const file = `${tag}${suffix}.sqlite`
+      const target = join(FIXTURE_DIR, file)
+      copyFileSync(dbPath, target)
+      // OrchestrationDb hardens its file to 0600; a checkout produces 0644, so match the checkout.
+      chmodSync(target, 0o644)
+      written.push({
+        tag,
+        variant,
+        file,
+        commit,
+        userVersion: expected.userVersion,
+        populateShape,
+        sha256: createHash('sha256').update(readFileSync(target)).digest('hex'),
+        expected: {
+          runIds: expected.runIds,
+          taskIds: expected.taskIds,
+          dispatchIds: expected.dispatchIds,
+          messages: expected.messages,
+          legacyAdoptionsCount: expected.legacyAdoptionsCount,
+          attachments: expected.attachments,
+          tableRowCounts: expected.tableRowCounts
+        }
+      })
     }
+    return written
   } finally {
     removeWorktree(worktree)
     rmSync(scratch, { recursive: true, force: true })
@@ -122,7 +141,7 @@ if (selected.length !== (requested.length || TAGS.length)) {
 const fixtures = []
 for (const entry of selected) {
   process.stdout.write(`populating ${entry.tag}\n`)
-  fixtures.push(await populateAtTag(entry))
+  fixtures.push(...(await populateAtTag(entry)))
 }
 const manifestPath = join(FIXTURE_DIR, 'manifest.json')
 const existing = requested.length
@@ -130,6 +149,6 @@ const existing = requested.length
       (entry) => !requested.includes(entry.tag)
     )
   : []
-const merged = [...existing, ...fixtures].sort((left, right) => left.tag.localeCompare(right.tag))
+const merged = [...existing, ...fixtures].sort((left, right) => left.file.localeCompare(right.file))
 writeFileSync(manifestPath, `${JSON.stringify({ fixtures: merged }, null, 2)}\n`)
 process.stdout.write(`wrote ${manifestPath}\n`)

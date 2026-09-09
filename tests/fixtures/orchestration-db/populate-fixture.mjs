@@ -66,14 +66,15 @@ function tableRowCounts(db) {
   return counts
 }
 
-function assertPopulated(dispatch, taskId, directMail, runMail) {
+function assertPopulated(dispatch, taskId, messages) {
   if (dispatch.task_id !== taskId || dispatch.assignee_handle !== PRINCIPALS.workerHandle) {
     throw new Error(`Dispatch not bound to ${PRINCIPALS.workerHandle}: ${JSON.stringify(dispatch)}`)
   }
-  if (directMail.read !== 0 || runMail.read !== 0) {
+  if (messages.some((message) => message.read !== 0)) {
     throw new Error('Fixture mail must be unread')
   }
-  if (directMail.to_handle !== PRINCIPALS.plainRecipientHandle) {
+  const directMail = messages.find((message) => message.id === PRINCIPALS.directMailId)
+  if (directMail && directMail.to_handle !== PRINCIPALS.plainRecipientHandle) {
     throw new Error(`Direct mail was rerouted to ${directMail.to_handle}`)
   }
 }
@@ -88,28 +89,35 @@ export function populateFixture(dbPath, shape) {
     })
     const task = db.createTask({ spec: 'Shipped-schema fixture task', runId: run.id })
     const dispatch = createDispatch(db, task.id, shape)
-    // No runId on purpose: each tag's own fallback decides where unbound direct mail lands.
-    const directMail = db.insertMessage({
-      id: PRINCIPALS.directMailId,
-      from: PRINCIPALS.plainSenderHandle,
-      to: PRINCIPALS.plainRecipientHandle,
-      subject: 'Unbound direct mail'
-    })
-    const runMail = db.insertMessage({
-      id: PRINCIPALS.runMailId,
-      from: PRINCIPALS.workerHandle,
-      to: `run:${run.id}`,
-      subject: 'Run mailbox mail',
-      runId: run.id
-    })
+    const messages = []
+    if (shape.includeUnboundDirectMail) {
+      // No runId on purpose: each tag's own fallback decides where unbound direct mail lands.
+      messages.push(
+        db.insertMessage({
+          id: PRINCIPALS.directMailId,
+          from: PRINCIPALS.plainSenderHandle,
+          to: PRINCIPALS.plainRecipientHandle,
+          subject: 'Unbound direct mail'
+        })
+      )
+    }
+    messages.push(
+      db.insertMessage({
+        id: PRINCIPALS.runMailId,
+        from: PRINCIPALS.workerHandle,
+        to: `run:${run.id}`,
+        subject: 'Run mailbox mail',
+        runId: run.id
+      })
+    )
     const attachment = createAttachment(db, shape, run.id)
-    assertPopulated(dispatch, task.id, directMail, runMail)
+    assertPopulated(dispatch, task.id, messages)
 
     const expected = {
       runIds: [run.id],
       taskIds: [task.id],
       dispatchIds: [dispatch.id],
-      messages: [directMail, runMail].map((message) => ({
+      messages: messages.map((message) => ({
         id: message.id,
         to: message.to_handle,
         read: message.read,

@@ -3,7 +3,7 @@ import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type Database from '../../../sqlite/sync-database'
+import SyncDatabase from '../../../sqlite/sync-database'
 import { resolveOrchestrationMigrationStartVersion } from '../orchestration-schema-version-skew'
 import { LEGACY_RUN_ID, SCHEMA_VERSION, federatedStubHomeRunId } from './contract-constants'
 import { OrchestrationDb } from './orchestration-db'
@@ -22,10 +22,16 @@ type FixtureMessage = { id: string; to: string; read: number; run_id: string }
 
 type Fixture = {
   tag: string
+  variant: 'unbound-mail' | 'no-unbound-mail'
+  file: string
   commit: string
   userVersion: number
   sha256: string
-  populateShape: { dispatchArguments: string; attachmentCarriesRunId: boolean }
+  populateShape: {
+    dispatchArguments: string
+    attachmentCarriesRunId: boolean
+    includeUnboundDirectMail: boolean
+  }
   expected: {
     runIds: string[]
     taskIds: string[]
@@ -37,6 +43,9 @@ type Fixture = {
   }
 }
 
+/** `resolveOrchestrationMigrationStartVersion`'s floor when it distrusts the stored stamp. */
+const POST_V6_REPLAY_FLOOR = 6
+
 const FIXTURE_DIR = join(__dirname, '..', '..', '..', '..', '..', 'tests', 'fixtures')
 const ORCHESTRATION_FIXTURE_DIR = join(FIXTURE_DIR, 'orchestration-db')
 
@@ -46,8 +55,8 @@ const fixtures: Fixture[] = (
   }
 ).fixtures
 
-function fixturePath(tag: string): string {
-  return join(ORCHESTRATION_FIXTURE_DIR, `${tag}.sqlite`)
+function fixturePath(fixture: Fixture): string {
+  return join(ORCHESTRATION_FIXTURE_DIR, fixture.file)
 }
 
 function sha256(path: string): string {
@@ -66,7 +75,7 @@ function storedUserVersion(path: string): number {
 
 type DatabaseShape = { objects: string[]; rowCounts: Record<string, number> }
 
-function tableNames(db: Database.Database): string[] {
+function tableNames(db: SyncDatabase.Database): string[] {
   return (
     db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as {
       name: string
@@ -74,7 +83,7 @@ function tableNames(db: Database.Database): string[] {
   ).map((row) => row.name)
 }
 
-function databaseShape(db: Database.Database): DatabaseShape {
+function databaseShape(db: SyncDatabase.Database): DatabaseShape {
   const objects = (
     db
       .prepare("SELECT type || ' ' || name || ' ' || COALESCE(sql, '') AS entry FROM sqlite_master")
@@ -92,14 +101,50 @@ function databaseShape(db: Database.Database): DatabaseShape {
 }
 
 /**
- * Column sets and index/trigger SQL, compared as sets.
+ * The CHECK clauses in a table's stored DDL.
+ *
+ * `table_info` does not report them, so widening a CHECK -- which SQLite can only do by rebuilding
+ * the table, as migrateV39 does -- is invisible to a column comparison. Scanned with balanced
+ * parentheses because the enum forms nest: `CHECK(kind IN ('a', 'b'))`.
+ */
+function checkConstraints(sql: string): string[] {
+  const clauses: string[] = []
+  const pattern = /\bCHECK\s*\(/gi
+  let match = pattern.exec(sql)
+  while (match) {
+    let depth = 1
+    let index = match.index + match[0].length
+    while (index < sql.length && depth > 0) {
+      if (sql[index] === '(') {
+        depth += 1
+      } else if (sql[index] === ')') {
+        depth -= 1
+      }
+      index += 1
+    }
+    clauses.push(sql.slice(match.index, index).replace(/\s+/g, ' '))
+    pattern.lastIndex = index
+    match = pattern.exec(sql)
+  }
+  return clauses.sort()
+}
+
+/**
+ * Column sets, CHECK clauses, and index/trigger SQL, compared as sets.
  *
  * ALTER TABLE appends, so a migrated table's stored CREATE SQL and column order never match a
- * freshly created one even when the schemas agree. What must agree is which columns exist and
- * how they are declared.
+ * freshly created one even when the schemas agree. What must agree is which columns exist, how
+ * they are declared, and what the table refuses to store.
  */
-function schemaFingerprint(db: Database.Database): Record<string, string[]> {
+function schemaFingerprint(db: SyncDatabase.Database): Record<string, string[]> {
   const fingerprint: Record<string, string[]> = {}
+  const tableSql = new Map(
+    (
+      db
+        .prepare("SELECT name, COALESCE(sql, '') AS sql FROM sqlite_master WHERE type = 'table'")
+        .all() as { name: string; sql: string }[]
+    ).map((row) => [row.name, row.sql])
+  )
   for (const name of tableNames(db)) {
     if (name === 'sqlite_sequence') {
       continue
@@ -117,6 +162,7 @@ function schemaFingerprint(db: Database.Database): Record<string, string[]> {
           `${column.name} ${column.type} notnull=${column.notnull} pk=${column.pk} default=${String(column.dflt_value)}`
       )
       .sort()
+    fingerprint[`checks ${name}`] = checkConstraints(tableSql.get(name) ?? '')
   }
   const rest = db
     .prepare(
@@ -151,11 +197,16 @@ describe('shipped-schema orchestration fixtures', () => {
     }
   })
 
-  function openCopy(tag: string): { path: string; db: OrchestrationDb } {
-    const dir = mkdtempSync(join(tmpdir(), `orca-shipped-${tag}-`))
+  function copyFixture(fixture: Fixture): string {
+    const dir = mkdtempSync(join(tmpdir(), `orca-shipped-${fixture.tag}-`))
     tempDirs.push(dir)
     const path = join(dir, 'orchestration.db')
-    copyFileSync(fixturePath(tag), path)
+    copyFileSync(fixturePath(fixture), path)
+    return path
+  }
+
+  function openCopy(fixture: Fixture): { path: string; db: OrchestrationDb } {
+    const path = copyFixture(fixture)
     return { path, db: new OrchestrationDb(path) }
   }
 
@@ -171,29 +222,36 @@ describe('shipped-schema orchestration fixtures', () => {
   }
 
   it('has a manifest entry for every committed fixture', () => {
-    expect(fixtures.map((fixture) => fixture.tag)).toEqual([
-      'v1.4.180',
-      'v1.4.190',
-      'v1.4.198',
-      'v1.4.199'
+    expect(fixtures.map((fixture) => fixture.file)).toEqual([
+      'v1.4.180-no-unbound-mail.sqlite',
+      'v1.4.180.sqlite',
+      'v1.4.190-no-unbound-mail.sqlite',
+      'v1.4.190.sqlite',
+      'v1.4.198-no-unbound-mail.sqlite',
+      'v1.4.198.sqlite',
+      'v1.4.199-no-unbound-mail.sqlite',
+      'v1.4.199.sqlite'
     ])
     for (const fixture of fixtures) {
-      expect(sha256(fixturePath(fixture.tag)), `${fixture.tag} bytes`).toBe(fixture.sha256)
-      expect(storedUserVersion(fixturePath(fixture.tag)), `${fixture.tag} user_version`).toBe(
+      expect(sha256(fixturePath(fixture)), `${fixture.file} bytes`).toBe(fixture.sha256)
+      expect(storedUserVersion(fixturePath(fixture)), `${fixture.file} user_version`).toBe(
         fixture.userVersion
       )
-      expect(fixture.userVersion, `${fixture.tag} predates the current schema`).toBeLessThanOrEqual(
-        SCHEMA_VERSION
-      )
+      expect(
+        fixture.userVersion,
+        `${fixture.file} predates the current schema`
+      ).toBeLessThanOrEqual(SCHEMA_VERSION)
     }
   })
 
   for (const fixture of fixtures) {
-    const { tag, expected } = fixture
+    const { expected } = fixture
+    const tag = `${fixture.tag} (${fixture.variant})`
+    const carriesLegacyGraph = expected.messages.some((message) => message.run_id === LEGACY_RUN_ID)
 
     it(`migrates ${tag} to the schema a fresh install creates`, () => {
       const expectedFingerprint = freshSchemaFingerprint()
-      const { db } = openCopy(tag)
+      const { db } = openCopy(fixture)
       try {
         expect(db.db.pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION)
         // The stamp is not the schema: a migration that forgets a column still stamps 40.
@@ -204,7 +262,7 @@ describe('shipped-schema orchestration fixtures', () => {
     })
 
     it(`keeps every ${tag} row addressable after migration`, () => {
-      const { db } = openCopy(tag)
+      const { db } = openCopy(fixture)
       try {
         for (const runId of expected.runIds) {
           expect(db.getRun(runId), `${tag} run ${runId}`).toMatchObject({ id: runId })
@@ -249,17 +307,14 @@ describe('shipped-schema orchestration fixtures', () => {
     })
 
     it(`adopts the legacy graph in ${tag} exactly once and reopens unchanged`, () => {
-      const { path, db } = openCopy(tag)
-      const adoptsLegacyGraph = expected.messages.some(
-        (message) => message.run_id === LEGACY_RUN_ID
-      )
+      const { path, db } = openCopy(fixture)
       let firstShape: DatabaseShape
       try {
         const adoptions = (
           db.db.prepare('SELECT COUNT(*) AS total FROM legacy_adoptions').get() as { total: number }
         ).total
         expect(adoptions, `${tag} legacy_adoptions rows`).toBe(
-          expected.legacyAdoptionsCount + (adoptsLegacyGraph ? 1 : 0)
+          expected.legacyAdoptionsCount + (carriesLegacyGraph ? 1 : 0)
         )
         expect(
           resolveOrchestrationMigrationStartVersion(db.db, SCHEMA_VERSION, SCHEMA_VERSION),
@@ -282,9 +337,41 @@ describe('shipped-schema orchestration fixtures', () => {
         reopened.close()
       }
 
-      expect(sha256(fixturePath(tag)), `${tag} committed fixture must not be written`).toBe(
+      expect(sha256(fixturePath(fixture)), `${tag} committed fixture must not be written`).toBe(
         fixture.sha256
       )
+    })
+
+    it(`enters ${tag} at the start version its on-disk state earns`, () => {
+      const path = copyFixture(fixture)
+      const raw = new SyncDatabase(path)
+      let startVersion: number
+      try {
+        startVersion = resolveOrchestrationMigrationStartVersion(
+          raw,
+          raw.pragma('user_version', { simple: true }) as number,
+          SCHEMA_VERSION
+        )
+      } finally {
+        raw.close()
+      }
+      // Mail under the legacy Run means the stamp is not trustworthy and the chain replays from
+      // the v6 floor. Without it the stamp is trusted and only the tail migrations run, which is
+      // the path most upgrading users are on and the one a forgotten tail migration breaks.
+      expect(startVersion, `${tag} start version before migration`).toBe(
+        carriesLegacyGraph ? POST_V6_REPLAY_FLOOR : fixture.userVersion
+      )
+
+      const db = new OrchestrationDb(path)
+      try {
+        expect(db.db.pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION)
+        const adoptions = (
+          db.db.prepare('SELECT COUNT(*) AS total FROM legacy_adoptions').get() as { total: number }
+        ).total
+        expect(adoptions, `${tag} legacy_adoptions rows`).toBe(carriesLegacyGraph ? 1 : 0)
+      } finally {
+        db.close()
+      }
     })
   }
 })
