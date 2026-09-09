@@ -1,5 +1,7 @@
 import { normalizeAgentSessionConversationName } from '../../shared/agent-session-conversation-name'
 import type { CodexAppServerConnection } from './codex-app-server-connection'
+import { isCodexAppServerUnsupportedError } from './codex-app-server-session'
+import { codexConversationNameCapabilityCache } from './codex-conversation-name-capability'
 import { readCodexNamingConfig } from './codex-conversation-naming-config'
 import { readCodexThreadId, readCodexThreadName } from './codex-structured-thread-facts'
 
@@ -20,6 +22,9 @@ export const CODEX_CONVERSATION_NAME_SCHEMA = {
 } as const
 
 const NAMING_TURN_EFFORT = 'low'
+
+/** Written to the throwaway naming thread only, to prove the RPC exists. */
+const NAMING_CAPABILITY_PROBE_NAME = 'Untitled'
 
 export const CODEX_CONVERSATION_NAME_PROMPT = [
   'Write a concise, single-line title for the task described below.',
@@ -159,10 +164,21 @@ export type CodexConversationNameGeneration = {
   prompt: string
   model?: string
   timeoutMs?: number
+  /** Host whose codex is being asked to accept a thread name. */
+  capabilityKey: string
+  /** Fired once the billed turn is committed, so a rejection still settles. */
+  onTurnStarted?: () => void
   isCancelled: () => boolean
 }
 
 export type CodexConversationNameOutcome = { name: string | null; settled: boolean }
+
+/** A billed turn produced no usable name. Settled regardless: re-running it
+ *  would pay again on every acquisition, and most causes never self-correct. */
+const BILLED_WITHOUT_NAME = { name: null, settled: true } as const
+
+/** Nothing was billed, so a later acquisition may retry for free. */
+const UNBILLED = { name: null, settled: false } as const
 
 export async function generateAndSetCodexConversationName(
   input: CodexConversationNameGeneration
@@ -187,13 +203,21 @@ export async function generateAndSetCodexConversationName(
   )
   const namingThreadId = readCodexThreadId(opened)
   if (!namingThreadId || namingThreadId === input.threadId) {
-    return { name: null, settled: false }
+    return UNBILLED
   }
   if (!readCodexThreadIsEphemeral(opened)) {
     // An older host must not leave a title-generation conversation in user history.
     await connection.request('thread/delete', { threadId: namingThreadId }, { timeoutMs })
-    return { name: null, settled: false }
+    return UNBILLED
   }
+  if (!(await canNameCodexThread(input, namingThreadId))) {
+    // Left unsettled on purpose: nothing was billed, so a codex upgrade during
+    // the retry window can still name this conversation later.
+    return UNBILLED
+  }
+  // The billing boundary. Crossed before the await because a `turn/start` that
+  // reaches the host may bill even when the response never arrives.
+  input.onTurnStarted?.()
   await connection.request(
     'turn/start',
     {
@@ -206,17 +230,20 @@ export async function generateAndSetCodexConversationName(
   )
   const result = await collector.answer
   if (input.isCancelled()) {
-    return { name: null, settled: false }
+    return BILLED_WITHOUT_NAME
   }
   if (result.outcome === 'declined') {
-    return { name: null, settled: true }
+    return BILLED_WITHOUT_NAME
   }
   if (result.outcome !== 'answered') {
-    return { name: null, settled: false }
+    // 'failed' (a rate-limited or out-of-credit account) and 'timed-out' both
+    // land here. Retrying re-pays on every acquisition without ever succeeding.
+    return BILLED_WITHOUT_NAME
   }
   const title = readCodexGeneratedTitle(result.text)
   if (!title) {
-    return { name: null, settled: false }
+    // A model that ignored the output schema will ignore it again.
+    return BILLED_WITHOUT_NAME
   }
   // Generation can overlap a rename in another client.
   const current = await userConnection.request(
@@ -225,15 +252,53 @@ export async function generateAndSetCodexConversationName(
     { timeoutMs }
   )
   if (input.isCancelled()) {
-    return { name: null, settled: false }
+    return BILLED_WITHOUT_NAME
   }
   if (readCodexThreadId(current) !== input.threadId || !isCodexThreadReadablyUnnamed(current)) {
-    return { name: null, settled: true }
+    return BILLED_WITHOUT_NAME
   }
   const name = normalizeAgentSessionConversationName(title)
   if (!name) {
-    return { name: null, settled: true }
+    return BILLED_WITHOUT_NAME
   }
-  await userConnection.request('thread/name/set', { threadId: input.threadId, name }, { timeoutMs })
+  try {
+    await userConnection.request(
+      'thread/name/set',
+      { threadId: input.threadId, name },
+      { timeoutMs }
+    )
+  } catch (error) {
+    if (!isCodexAppServerUnsupportedError(error)) {
+      throw error
+    }
+    // The probe passed but the user's host refuses the name: record the absence
+    // so the next acquisition skips naming instead of paying for it again.
+    codexConversationNameCapabilityCache.rememberUnsupported(input.capabilityKey)
+    return BILLED_WITHOUT_NAME
+  }
   return { name, settled: true }
+}
+
+/** Proves `thread/name/set` exists by naming the throwaway thread, so a host
+ *  that lacks the RPC never pays for a turn whose title it cannot store. */
+function canNameCodexThread(
+  input: CodexConversationNameGeneration,
+  namingThreadId: string
+): Promise<boolean> {
+  if (codexConversationNameCapabilityCache.isKnownSupported(input.capabilityKey)) {
+    return Promise.resolve(true)
+  }
+  return codexConversationNameCapabilityCache.runWithFallback(
+    input.capabilityKey,
+    async () => {
+      await input.connection.request(
+        'thread/name/set',
+        { threadId: namingThreadId, name: NAMING_CAPABILITY_PROBE_NAME },
+        { timeoutMs: input.timeoutMs }
+      )
+      return true
+    },
+    () => Promise.resolve(false),
+    isCodexAppServerUnsupportedError
+  )
 }

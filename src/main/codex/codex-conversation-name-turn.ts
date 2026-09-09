@@ -1,5 +1,6 @@
 import type { AgentJournalMessageItem } from '../../shared/agent-session-journal-types'
 import { agentSessionNamingPromptText } from '../native-chat/agent-session-wire/agent-session-naming-prompt-text'
+import type { CodexConversationNameOutcome } from './codex-conversation-name-generation'
 import { CodexConversationNamingTask } from './codex-conversation-naming-task'
 import type { openCodexAppServerConnection } from './codex-app-server-connection'
 import { readCodexThreadId, readCodexThreadName } from './codex-structured-thread-facts'
@@ -85,16 +86,19 @@ export function startCodexConversationNaming(input: CodexConversationNamingInput
         }
       })
       session.naming = task
-      let outcome
+      let outcome: CodexConversationNameOutcome | null = null
       try {
         outcome = await task.result
       } finally {
         if (await task.close()) {
           session.naming = null
         }
-      }
-      if (outcome.settled) {
-        input.markNamingAttempted?.(sessionId)
+        // A rejection out of `task.result` skips every line below it, so a
+        // failing `thread/name/set` used to leave nothing durable and re-pay a
+        // fresh turn on every acquisition. Settle whenever a turn was billed.
+        if (outcome?.settled || task.billedTurn) {
+          input.markNamingAttempted?.(sessionId)
+        }
       }
       // Provider notifications can supersede the RPC result while its child is closing.
       if (

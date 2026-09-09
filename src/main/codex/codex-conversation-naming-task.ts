@@ -12,6 +12,7 @@ import {
   type CodexConversationNameGeneration,
   type CodexConversationNameOutcome
 } from './codex-conversation-name-generation'
+import { codexConversationNameCapabilityKey } from './codex-conversation-name-capability'
 import { CODEX_SPAWN_TOKEN_ENV } from './codex-structured-owner-identity'
 
 const NAMING_TIMEOUT_MS = 60_000
@@ -19,6 +20,8 @@ const NAMING_TIMEOUT_MS = 60_000
 export class CodexConversationNamingTask {
   private connection: CodexAppServerConnection | null = null
   private cancelled = false
+  /** A model turn was committed, so the caller must settle even on rejection. */
+  billedTurn = false
   private exitProven = false
   private finishAcquisition = (): void => {}
   private readonly acquired = new Promise<void>((resolve) => {
@@ -35,7 +38,10 @@ export class CodexConversationNamingTask {
   constructor(input: {
     launch: CodexAppServerLaunch
     openConnection?: typeof openCodexAppServerConnection
-    generation: Omit<CodexConversationNameGeneration, 'connection' | 'collector' | 'isCancelled'>
+    generation: Omit<
+      CodexConversationNameGeneration,
+      'connection' | 'collector' | 'isCancelled' | 'capabilityKey' | 'onTurnStarted'
+    >
     timeoutMs?: number
     onError?: (scope: string, error: unknown) => void
   }) {
@@ -58,7 +64,10 @@ export class CodexConversationNamingTask {
   private async run(input: {
     launch: CodexAppServerLaunch
     openConnection?: typeof openCodexAppServerConnection
-    generation: Omit<CodexConversationNameGeneration, 'connection' | 'collector' | 'isCancelled'>
+    generation: Omit<
+      CodexConversationNameGeneration,
+      'connection' | 'collector' | 'isCancelled' | 'capabilityKey' | 'onTurnStarted'
+    >
   }): Promise<CodexConversationNameOutcome> {
     // Cancellation can precede the handshake, but ownership must survive its rejection.
     const opening = (input.openConnection ?? openCodexAppServerConnection)(
@@ -103,6 +112,10 @@ export class CodexConversationNamingTask {
     }
     return generateAndSetCodexConversationName({
       ...input.generation,
+      capabilityKey: codexConversationNameCapabilityKey(input.launch),
+      onTurnStarted: () => {
+        this.billedTurn = true
+      },
       connection: { request },
       collector: this.collector,
       isCancelled: () => this.cancelled

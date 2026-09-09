@@ -5,9 +5,31 @@ import {
   readCodexGeneratedTitle
 } from './codex-conversation-name-generation'
 
+let capabilityKeys = 0
+let shared = 0
+
+function unsupported(): Error {
+  const error = new Error('thread/name/set is not supported')
+  error.name = 'CodexAppServerUnsupportedError'
+  return error
+}
+
 function generation(
-  options: { read?: unknown; opened?: unknown; config?: unknown; answer?: string | null } = {}
+  options: {
+    read?: unknown
+    opened?: unknown
+    config?: unknown
+    answer?: string | null
+    /** Host that has no `thread/name/set`, refusing the pre-turn probe. */
+    probeUnsupported?: boolean
+    /** Probe passes but the user's own thread refuses the name. */
+    userNameSetUnsupported?: boolean
+    capabilityKey?: string
+  } = {}
 ) {
+  // The capability cache is a module singleton; a fresh key per fixture keeps
+  // one test's remembered host out of the next one.
+  const capabilityKey = options.capabilityKey ?? `host-${(capabilityKeys += 1)}`
   const collector = createCodexNamingTurnCollector(1000)
   const connection = {
     request: vi.fn(async (method: string) => {
@@ -16,6 +38,9 @@ function generation(
       }
       if (method === 'thread/start') {
         return options.opened ?? { thread: { id: 'naming', ephemeral: true } }
+      }
+      if (method === 'thread/name/set' && options.probeUnsupported) {
+        throw unsupported()
       }
       if (method === 'turn/start') {
         if (options.answer !== null) {
@@ -29,7 +54,12 @@ function generation(
     })
   }
   const userConnection = {
-    request: vi.fn(async () => options.read ?? { thread: { id: 'user', name: null } })
+    request: vi.fn(async (method: string) => {
+      if (method === 'thread/name/set' && options.userNameSetUnsupported) {
+        throw unsupported()
+      }
+      return options.read ?? { thread: { id: 'user', name: null } }
+    })
   }
   const run = () =>
     generateAndSetCodexConversationName({
@@ -40,6 +70,7 @@ function generation(
       threadId: 'user',
       prompt: 'fix lease probe',
       model: 'selected-model',
+      capabilityKey,
       isCancelled: () => false
     }).finally(() => collector.dispose())
   return { run, connection, userConnection }
@@ -52,6 +83,8 @@ describe('Codex conversation naming generation', () => {
     expect(connection.request.mock.calls.map(([method]) => method)).toEqual([
       'config/read',
       'thread/start',
+      // Proves the host stores a thread name before any turn is billed.
+      'thread/name/set',
       'turn/start'
     ])
     expect(userConnection.request.mock.calls).toEqual([
@@ -124,13 +157,14 @@ describe('Codex conversation naming generation', () => {
     expect(connection.request).toHaveBeenCalledTimes(1)
   })
 
-  it.each([
-    [null, true],
-    ['prose', false],
-    ['{"title":""}', false]
-  ])('accounts for declines and unusable responses: %s', async (answer, settled) => {
-    await expect(generation({ answer }).run()).resolves.toEqual({ name: null, settled })
-  })
+  // Every case here has already paid for a turn, so all of them must settle:
+  // an unsettled outcome re-pays a fresh turn on the next acquisition.
+  it.each([null, 'prose', '{"title":""}'])(
+    'settles declines and unusable responses so the billed turn is not repeated: %s',
+    async (answer) => {
+      await expect(generation({ answer }).run()).resolves.toEqual({ name: null, settled: true })
+    }
+  )
 
   it('bounds and flattens provider names', async () => {
     const { run } = generation({
@@ -139,6 +173,57 @@ describe('Codex conversation naming generation', () => {
     const { name } = await run()
     expect(name).not.toContain('\n')
     expect(name!.length).toBeLessThanOrEqual(200)
+  })
+
+  it('never pays for a turn on a host that cannot store a thread name', async () => {
+    const { run, connection, userConnection } = generation({ probeUnsupported: true })
+
+    // Unsettled on purpose: nothing was billed, so a later codex upgrade can
+    // still name this conversation.
+    await expect(run()).resolves.toEqual({ name: null, settled: false })
+    expect(connection.request.mock.calls.map(([method]) => method)).toEqual([
+      'config/read',
+      'thread/start',
+      'thread/name/set'
+    ])
+    expect(userConnection.request).not.toHaveBeenCalled()
+  })
+
+  it('remembers the missing capability so a second session skips the probe and the turn', async () => {
+    const capabilityKey = `shared-${(shared += 1)}`
+    await generation({ probeUnsupported: true, capabilityKey }).run()
+
+    const { run, connection } = generation({ capabilityKey })
+
+    await expect(run()).resolves.toEqual({ name: null, settled: false })
+    expect(connection.request.mock.calls.map(([method]) => method)).toEqual([
+      'config/read',
+      'thread/start'
+    ])
+  })
+
+  it('settles and records the absence when the user thread refuses the name', async () => {
+    // The turn is already paid for here, so leaving it unsettled would re-pay a
+    // fresh turn on every acquisition and could never succeed.
+    const capabilityKey = `shared-${(shared += 1)}`
+    await expect(
+      generation({ userNameSetUnsupported: true, capabilityKey }).run()
+    ).resolves.toEqual({ name: null, settled: true })
+
+    const { run, connection } = generation({ capabilityKey })
+    await run()
+    expect(connection.request.mock.calls.map(([method]) => method)).not.toContain('turn/start')
+  })
+
+  it('propagates a non-capability failure from the name write', async () => {
+    const { run, userConnection } = generation()
+    userConnection.request.mockImplementation(async (method: string) => {
+      if (method === 'thread/name/set') {
+        throw new Error('transport died')
+      }
+      return { thread: { id: 'user', name: null } }
+    })
+    await expect(run()).rejects.toThrow('transport died')
   })
 
   it.each([null, '', 'prose', '{"title":" "}', JSON.stringify({ title: 'a'.repeat(9000) })])(

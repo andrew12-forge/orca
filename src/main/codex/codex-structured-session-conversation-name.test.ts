@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentSessionJournalIdentity } from '../../shared/agent-session-journal-types'
 import type {
   CodexAppServerConnection,
@@ -6,6 +6,7 @@ import type {
   CodexAppServerLaunch,
   openCodexAppServerConnection
 } from './codex-app-server-connection'
+import { codexConversationNameCapabilityCache } from './codex-conversation-name-capability'
 import { CodexStructuredSessionAdapter } from './codex-structured-session-adapter'
 
 const THREAD_ID = 'thread-abc'
@@ -129,6 +130,8 @@ function namingProvider(
     decline?: boolean
     failClose?: boolean
     holdClose?: Promise<void>
+    /** The user's own thread rejects the finished name. */
+    failUserNameSet?: boolean
   } = {}
 ) {
   const connections: FakeConnection[] = []
@@ -146,6 +149,9 @@ function namingProvider(
       request: vi.fn(async (method, params) => {
         if (method === 'config/read') {
           return { config: {} }
+        }
+        if (method === 'thread/name/set' && !naming && options.failUserNameSet) {
+          throw new Error('name write refused')
         }
         if (method === 'thread/start') {
           return { thread: { id: naming ? 'naming' : THREAD_ID, ephemeral: naming } }
@@ -232,6 +238,22 @@ async function namingAdapter(provider: ReturnType<typeof namingProvider>, attemp
 }
 
 describe('Codex naming process isolation through the adapter', () => {
+  // The capability cache is a module singleton shared by every test here.
+  beforeEach(() => codexConversationNameCapabilityCache.clear())
+
+  it('marks the attempt durably when the name write rejects after a billed turn', async () => {
+    // The rejection unwinds past the publish path, so without an explicit
+    // settle nothing durable is written and the next acquisition pays again.
+    const provider = namingProvider({ failUserNameSet: true })
+    const f = await namingAdapter(provider)
+
+    await f.dispatch()
+
+    expect(f.markNamingAttempted).toHaveBeenCalledWith(SESSION)
+    expect(f.onConversationName).not.toHaveBeenCalled()
+    await f.adapter.closeAll()
+  })
+
   it.each(['A newer manual name', null])(
     'preserves a newer provider publication during naming cleanup: %s',
     async (newerName) => {
@@ -310,14 +332,18 @@ describe('Codex naming process isolation through the adapter', () => {
     await f.adapter.closeAll()
   })
 
-  it('keeps a naming child indexed when its exit cannot be proven and retries close', async () => {
+  it('closes the session and retries a naming child whose exit cannot be proven', async () => {
+    // The naming child is cosmetic: gating the close on its exit proof made
+    // acquisition throw and left the user with an unusable chat.
     const provider = namingProvider({ hang: true, failClose: true })
     const f = await namingAdapter(provider)
     await f.dispatch()
-    await expect(f.adapter.closeSession(SESSION)).resolves.toBe(false)
-    const close = vi.mocked(provider.connections[1]!.close)
-    close.mockResolvedValue(true)
     await expect(f.adapter.closeSession(SESSION)).resolves.toBe(true)
+    const close = vi.mocked(provider.connections[1]!.close)
+    expect(close).toHaveBeenCalled()
+    // Ownership moved to the orphan registry, which shutdown still drains.
+    close.mockResolvedValue(true)
+    await f.adapter.closeAll()
     expect(close.mock.calls.length).toBeGreaterThan(1)
   })
 
