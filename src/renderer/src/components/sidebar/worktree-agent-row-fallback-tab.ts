@@ -19,8 +19,10 @@ export function tabFromWorktreeAttributedStatusEntry(
     ptyId: null,
     worktreeId: entry.worktreeId,
     title: entry.terminalTitle ?? 'Agent',
-    // Authoritative, so it skips the live-title sanitizer entirely.
-    customTitle: entry.conversationName ?? null,
+    // Its own slot, not the user-intent one: a generated name must stay
+    // distinguishable from a rename the user typed.
+    conversationName: entry.conversationName ?? null,
+    customTitle: null,
     color: null,
     sortOrder: Number.MAX_SAFE_INTEGER,
     // Why: missing-tab rows must keep their original clock through real state
