@@ -5,6 +5,9 @@ import {
   nativeChatSessionChoiceLabel
 } from './native-chat-session-option-labels'
 import type { SessionOptionDescriptor } from '../../../../shared/native-chat-session-options'
+import { CLAUDE_SESSION_OPTION_CATALOG } from '../../../../shared/agent-session-option-catalog-claude-codex'
+import { buildNativeChatSessionOptionSnapshot } from '../../../../shared/native-chat-session-option-snapshot'
+import { createNativeChatSessionOptionRecord } from '../../../../shared/native-chat-session-option-state'
 
 vi.mock('@/i18n/i18n', () => ({
   translate: vi.fn((_key: string, fallback: string) => fallback)
@@ -48,6 +51,24 @@ describe('nativeChatModelPillLabel', () => {
     // A discovered list can drop an id the record still tracks; showing the id beats
     // showing "Model" while a real model is running.
     expect(nativeChatModelPillLabel(modelDescriptor('reported', 'grok-build'))).toBe('grok-build')
+  })
+
+  it('names the unlisted model a real snapshot reports, end to end', () => {
+    // The producer half of the contract above: the snapshot must keep handing the pill a
+    // `currentValue` and a non-`unknown` source for a model that is running but unlisted,
+    // or the composer goes back to reading a neutral "Model" over a live session.
+    const record = createNativeChatSessionOptionRecord('claude')
+    record.model = { value: 'claude-opus-5', source: 'reported' }
+    const snapshot = buildNativeChatSessionOptionSnapshot({
+      catalog: CLAUDE_SESSION_OPTION_CATALOG,
+      models: CLAUDE_SESSION_OPTION_CATALOG.models,
+      record,
+      mode: 'live',
+      modelLabel: 'Model',
+      liveTransport: 'catalog'
+    })
+
+    expect(nativeChatModelPillLabel(snapshot[0]!)).toBe('claude-opus-5')
   })
 })
 

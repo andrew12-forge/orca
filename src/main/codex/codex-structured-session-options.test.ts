@@ -1,4 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
+import { CODEX_SESSION_OPTION_CATALOG } from '../../shared/agent-session-option-catalog-claude-codex'
+import {
+  applyStructuredAgentSessionOptions,
+  createStructuredAgentSessionOptionState,
+  structuredAgentSessionOptionSnapshot
+} from '../../shared/structured-agent-session-options'
 import type { CodexAppServerConnection } from './codex-app-server-connection'
 import { CodexAcquisitionWindow } from './codex-structured-acquisition-window'
 import {
@@ -121,6 +127,66 @@ describe('structured Codex session options', () => {
       { limit: 100, includeHidden: false, cursor: 'page-2' },
       { timeoutMs: undefined }
     )
+  })
+
+  it('reports an unlisted current model without offering it as a choice', async () => {
+    // Was: a fabricated `{ id, label: id, efforts: [] }` row, which offered a raw launch
+    // id in the picker as though the account were entitled to it.
+    const request = vi.fn(async () => ({
+      data: [{ model: 'gpt-live', displayName: 'GPT Live', isDefault: true }],
+      nextCursor: null
+    }))
+
+    await expect(
+      readCodexStructuredSessionOptions({
+        connection: { request } as never,
+        current: { model: 'gpt-unlisted' }
+      })
+    ).resolves.toEqual({
+      models: [{ id: 'gpt-live', label: 'GPT Live', isDefault: true, efforts: [] }],
+      current: { model: 'gpt-unlisted' }
+    })
+  })
+
+  it('falls back to the seed when model/list answers nothing for a running thread', async () => {
+    // The thread still runs a model, and an empty list carries no options — the snapshot
+    // returns nothing at all for one, taking the effort pill with the model pill.
+    const request = vi.fn(async () => ({ data: [], nextCursor: null }))
+
+    const result = await readCodexStructuredSessionOptions({
+      connection: { request } as never,
+      current: { model: 'gpt-5.9-secret' }
+    })
+
+    expect(result.current.model).toBe('gpt-5.9-secret')
+    expect(result.models.map((model) => model.id)).toEqual(
+      CODEX_SESSION_OPTION_CATALOG.models.map((model) => model.id)
+    )
+    expect(result.models.some((model) => model.id === 'gpt-5.9-secret')).toBe(false)
+
+    // What the floor is for: both pills survive, and the pill still names what runs.
+    const snapshot = structuredAgentSessionOptionSnapshot(
+      applyStructuredAgentSessionOptions(
+        createStructuredAgentSessionOptionState('codex'),
+        CODEX_SESSION_OPTION_CATALOG,
+        result
+      )
+    )
+    expect(snapshot.map((descriptor) => descriptor.id)).toEqual(['model', 'effort'])
+    // Any source but `unknown` makes the pill name the value it carries.
+    expect(snapshot[0]).toMatchObject({
+      valueSource: 'dispatched',
+      kind: { type: 'select', currentValue: 'gpt-5.9-secret' }
+    })
+    expect(snapshot[1]).toMatchObject({ settable: true })
+  })
+
+  it('still refuses a thread with neither a listed model nor a current one', async () => {
+    const request = vi.fn(async () => ({ data: [], nextCursor: null }))
+
+    await expect(
+      readCodexStructuredSessionOptions({ connection: { request } as never, current: {} })
+    ).rejects.toThrow('codex app-server returned no available models')
   })
 
   it('hydrates current values from thread start or resume', () => {

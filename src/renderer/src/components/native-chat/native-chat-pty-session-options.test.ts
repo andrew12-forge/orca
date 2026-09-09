@@ -593,21 +593,32 @@ describe('native chat PTY session options', () => {
     expect(surface.getSnapshot()[0]).toMatchObject({ valueSource: 'unknown' })
   })
 
-  it('passes an unknown persisted model through as a literal choice', () => {
+  it('names a raw launch model without offering it, and keeps its effort picker', async () => {
+    // `worker-start --model claude-opus-5` persists a launch flag no list carries. It used
+    // to be fabricated into the dropdown as a pickable model, with `options: []` behind it.
     seedNativeChatAppliedSessionOptions('pty-1', 'claude', {
-      model: 'future-model'
+      model: 'claude-opus-5'
     })
+    const dispatch = vi.fn()
     const surface = createNativeChatPtySessionOptions({
       agent: 'claude',
       scopeKey: 'pty-1',
       mode: 'live',
-      dispatchCommand: vi.fn()
+      dispatchCommand: dispatch
     })!
+
     const model = surface.getSnapshot()[0]
-    expect(model.kind).toMatchObject({
-      currentValue: 'future-model',
-      choices: expect.arrayContaining([{ value: 'future-model', label: 'future-model' }])
-    })
+    expect(model.kind.type === 'select' ? model.kind.choices : []).not.toContainEqual(
+      expect.objectContaining({ value: 'claude-opus-5' })
+    )
+    // The session is running it, so the pill still names it.
+    expect(model.kind).toMatchObject({ currentValue: 'claude-opus-5' })
+    expect(model.valueSource).toBe('applied')
+
+    const effort = surface.getSnapshot().find(({ id }) => id === 'effort')
+    expect(effort).toMatchObject({ settable: true })
+    await surface.setOption('effort', 'high')
+    expect(dispatch).toHaveBeenCalledWith('/effort high')
   })
 
   it('keeps a tracked alias selectable when the host catalog omits it', async () => {

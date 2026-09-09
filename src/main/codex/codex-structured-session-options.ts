@@ -1,3 +1,4 @@
+import { CODEX_SESSION_OPTION_CATALOG } from '../../shared/agent-session-option-catalog-claude-codex'
 import type {
   AgentSessionModelOption,
   AgentSessionOptionChoice,
@@ -75,6 +76,21 @@ function modelOption(value: unknown): AgentSessionModelOption | null {
   }
 }
 
+function seedCodexModels(): AgentSessionModelOption[] {
+  return CODEX_SESSION_OPTION_CATALOG.models.map((model) => {
+    const effort = model.options.find((option) => option.id === 'effort')
+    const select = effort?.kind.type === 'select' ? effort.kind : null
+    return {
+      id: model.id,
+      label: model.label,
+      ...(model.description ? { description: model.description } : {}),
+      isDefault: model.isDefault === true,
+      ...(select ? { defaultEffort: String(select.defaultValue) } : {}),
+      efforts: select ? select.choices : []
+    }
+  })
+}
+
 export async function readCodexStructuredSessionOptions(input: {
   connection: Pick<CodexAppServerConnection, 'request'>
   current: { model?: string; effort?: string }
@@ -102,20 +118,17 @@ export async function readCodexStructuredSessionOptions(input: {
       break
     }
   }
-  if (input.current.model && !models.some((model) => model.id === input.current.model)) {
-    models.push({
-      id: input.current.model,
-      label: input.current.model,
-      isDefault: false,
-      efforts: []
-    })
-  }
+  // `models` stays what `model/list` offered: a current id the account cannot select is
+  // still reported (the thread runs it) but never listed, so no raw id becomes a choice.
   const model = input.current.model ?? models.find((entry) => entry.isDefault)?.id ?? models[0]?.id
   if (!model) {
     throw new Error('codex app-server returned no available models')
   }
+  // Why: a restored thread still runs a model when `model/list` comes back empty, and the
+  // snapshot returns nothing at all for an empty list — blanking the effort pill too. Same
+  // seed floor the Claude reader applies; after the guard, so a thread with no model raises.
   return {
-    models,
+    models: models.length > 0 ? models : seedCodexModels(),
     current: { model, ...(input.current.effort ? { effort: input.current.effort } : {}) }
   }
 }

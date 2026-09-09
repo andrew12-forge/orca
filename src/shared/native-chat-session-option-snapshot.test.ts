@@ -178,19 +178,72 @@ describe('buildNativeChatSessionOptionSnapshot', () => {
       expect(snapshot.length).toBeGreaterThan(1)
     })
 
-    it('labels a wholly unknown tracked model by its id rather than dropping it', () => {
+    it('never invents a row for an id no list carries', () => {
+      // `worker-start --model claude-opus-5` is a raw launch flag, not a model anyone
+      // can pick: fabricating a row put it in the dropdown as a selectable model.
       const record = claudeRecord()
-      record.model = { value: 'experimental-model', source: 'reported' }
-      const reconciled = withTrackedNativeChatModel(
-        CLAUDE_SESSION_OPTION_CATALOG,
-        CLAUDE_SESSION_OPTION_CATALOG.models,
-        record
-      )
-      expect(reconciled.at(-1)).toEqual({
-        id: 'experimental-model',
-        label: 'experimental-model',
-        options: []
+      record.model = { value: 'claude-opus-5', source: 'reported' }
+      expect(
+        withTrackedNativeChatModel(
+          CLAUDE_SESSION_OPTION_CATALOG,
+          CLAUDE_SESSION_OPTION_CATALOG.models,
+          record
+        )
+      ).toEqual([...CLAUDE_SESSION_OPTION_CATALOG.models])
+    })
+
+    it('names the unlisted model that is running without offering it as a choice', () => {
+      const record = claudeRecord()
+      record.model = { value: 'claude-opus-5', source: 'reported' }
+      const snapshot = buildNativeChatSessionOptionSnapshot({
+        catalog: CLAUDE_SESSION_OPTION_CATALOG,
+        models: withTrackedNativeChatModel(
+          CLAUDE_SESSION_OPTION_CATALOG,
+          CLAUDE_SESSION_OPTION_CATALOG.models,
+          record
+        ),
+        record,
+        mode: 'live',
+        modelLabel: 'Model',
+        liveTransport: 'catalog'
       })
+      const model = snapshot[0]!
+      if (model.kind.type !== 'select') {
+        throw new Error('model descriptor must be a select')
+      }
+      expect(model.kind.choices.some((choice) => choice.value === 'claude-opus-5')).toBe(false)
+      // The session runs it, so the pill still names it: `currentValue` plus a source the
+      // pill does not withhold is what `nativeChatModelPillLabel` renders as the raw id.
+      expect(model.kind.currentValue).toBe('claude-opus-5')
+      expect(model.valueSource).toBe('reported')
+      // The fabricated row carried `options: []`, which took the effort picker with it.
+      const effort = snapshot.find((descriptor) => descriptor.id === 'effort')
+      expect(effort).toMatchObject({ settable: true, kind: { type: 'select' } })
+      expect(effort?.kind.type === 'select' ? effort.kind.choices.length : 0).toBeGreaterThan(1)
+    })
+
+    it('keeps a legitimately picked model unaffected', () => {
+      const record = claudeRecord()
+      record.model = { value: 'sonnet', source: 'reported' }
+      const snapshot = buildNativeChatSessionOptionSnapshot({
+        catalog: CLAUDE_SESSION_OPTION_CATALOG,
+        models: withTrackedNativeChatModel(
+          CLAUDE_SESSION_OPTION_CATALOG,
+          CLAUDE_SESSION_OPTION_CATALOG.models,
+          record
+        ),
+        record,
+        mode: 'live',
+        modelLabel: 'Model',
+        liveTransport: 'catalog'
+      })
+      const model = snapshot[0]!
+      expect(model.kind.type === 'select' ? model.kind.currentValue : null).toBe('sonnet')
+      expect(
+        model.kind.type === 'select' &&
+          model.kind.choices.some((choice) => choice.value === 'sonnet')
+      ).toBe(true)
+      expect(snapshot.find((descriptor) => descriptor.id === 'effort')).toBeDefined()
     })
 
     it('leaves the list alone when the tracked model is already listed', () => {
