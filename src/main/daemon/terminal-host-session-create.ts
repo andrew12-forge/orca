@@ -4,6 +4,7 @@ import { resolvePtyOwnerBackend } from '../../shared/pty-owner-backend'
 import { getDaemonSessionResultMetadata } from './daemon-create-or-attach-result'
 import { normalizePtySize } from './daemon-pty-size'
 import { Session } from './session'
+import { sessionFromRecord, type TerminalHostSessionRecord } from './terminal-host-session-record'
 import { shellPathSupportsPtyStartupBarrier } from './shell-ready'
 import type { InternalCreateOrAttachOptions } from './terminal-host-agent-session-claim'
 import type { CreateOrAttachResult } from './terminal-host-create-contract'
@@ -16,7 +17,7 @@ import { SessionNotFoundError } from './types'
 import { resolveWslSessionContext } from './wsl-session-context'
 
 type TerminalHostSessionCreateDependencies = {
-  sessions: Map<string, Session>
+  sessions: Map<string, TerminalHostSessionRecord>
   /** Re-checks the host's shutdown fence and this request's cancellation after any await. */
   assertCreateAllowed: () => void
   sessionTeardown: TerminalSessionTeardown
@@ -32,7 +33,7 @@ export async function createOrAttachTerminalSession(
   deps: TerminalHostSessionCreateDependencies
 ): Promise<CreateOrAttachResult> {
   opts.onSessionResolved?.(opts.sessionId)
-  let existing = deps.sessions.get(opts.sessionId)
+  let existing = sessionFromRecord(deps.sessions.get(opts.sessionId))
 
   // Why: descendant capture must finish before attach or recreation, or the
   // caller could receive a doomed session while teardown owns its process.
@@ -50,7 +51,7 @@ export async function createOrAttachTerminalSession(
       rejectOnAbort(opts.cancelSignal, opts.sessionId)
     ])
     deps.assertCreateAllowed()
-    existing = deps.sessions.get(opts.sessionId)
+    existing = sessionFromRecord(deps.sessions.get(opts.sessionId))
     // Unkillable child, or a fresh teardown claimed it while we waited: still nobody's to recreate.
     if (existing?.isAlive && existing.isTerminating) {
       throw new SessionNotFoundError(opts.sessionId)
@@ -89,8 +90,8 @@ export async function createOrAttachTerminalSession(
     throw new SessionNotFoundError(opts.sessionId)
   }
 
-  if (existing) {
-    existing.dispose()
+  if (deps.sessions.has(opts.sessionId)) {
+    existing?.dispose()
     deps.sessions.delete(opts.sessionId)
     deps.onDeadSessionRemoved(opts.sessionId)
   }

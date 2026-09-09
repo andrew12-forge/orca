@@ -1,17 +1,4 @@
-/**
- * Memory-leak regression: TerminalHost must reap dead sessions.
- *
- * SessionIds are minted fresh per pane and never reused, so a `TerminalHost`
- * that never reaps exited sessions leaks one `@xterm/headless` scrollback grid
- * and one native subprocess handle per terminal for the lifetime of the
- * long-lived daemon process. The grid is the retained bytes; the emulator-free
- * record left behind is a handful of fields.
- *
- * The fix wires a Session `onExit` hook to `TerminalHost.reapSession`, which
- * disposes the session -- freeing the emulator and the subprocess handle. These
- * tests assert that disposal happens when a subprocess exits (before the fix it
- * never did), and that the exited session leaves every live surface.
- */
+// Disposal alone does not release xterm buffers while the host still owns the Session.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TerminalHost } from './terminal-host'
 import type { SubprocessHandle } from './session-subprocess-handle'
@@ -100,25 +87,31 @@ describe('TerminalHost dead-session reaping (leak regression)', () => {
     // Natural exit.
     lastSubprocess._onExitCb?.(0)
 
-    // The dead session's emulator (its scrollback buffer) is freed, and the session is gone
-    // from every live surface.
+    // Live surfaces disappear even though the host still owes the exit evidence.
     expect(emulatorDispose).toHaveBeenCalledTimes(1)
     expect(host.listSessions()).toHaveLength(0)
   })
 
   it('does not retain dead-session emulators across many create/exit cycles', async () => {
     const CYCLES = 5
+    const expectedRecords: [string, { incarnationId: string; code: number }][] = []
     for (let i = 0; i < CYCLES; i++) {
-      await host.createOrAttach({
+      const created = await host.createOrAttach({
         sessionId: `session-${i}`,
         cols: 80,
         rows: 24,
         streamClient: streamClient()
       })
       lastSubprocess._onExitCb?.(0)
+      expectedRecords.push([`session-${i}`, { incarnationId: created.incarnationId, code: 0 }])
     }
 
-    // Every dead session was reaped: one emulator disposed per cycle, no scrollback retained.
+    const records = (host as unknown as { sessions: Map<string, unknown> }).sessions
+    expect([...records]).toEqual(expectedRecords)
+    expect(
+      [...records.values()].every((record) => Object.getPrototypeOf(record) === Object.prototype)
+    ).toBe(true)
+    // Owning only scalar evidence prevents any emulator/subprocess graph from being retained.
     expect(emulatorDispose).toHaveBeenCalledTimes(CYCLES)
     expect(host.listSessions()).toHaveLength(0)
   })

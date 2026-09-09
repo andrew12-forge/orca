@@ -1,4 +1,6 @@
 import type { Session } from './session'
+import { exitFromRecord, sessionFromRecord } from './terminal-host-session-record'
+import type { TerminalHostSessionRecord } from './terminal-host-session-record'
 import {
   SessionNotFoundError,
   type SessionInfo,
@@ -40,7 +42,7 @@ export type { CreateOrAttachOptions, CreateOrAttachResult } from './terminal-hos
 export type { TerminalHostOptions } from './terminal-host-options'
 
 export class TerminalHost {
-  private sessions = new Map<string, Session>()
+  private sessions = new Map<string, TerminalHostSessionRecord>()
   // Serializes creates for one id across async spawn validation.
   private pendingCreations = new Map<string, Promise<void>>()
   private sessionTeardown = new TerminalSessionTeardown(this.sessions)
@@ -91,11 +93,11 @@ export class TerminalHost {
         isLive: (owner) =>
           this.agentSessionGenerations.isCurrent(
             owner,
-            Boolean(this.sessions.get(owner.ptyId)?.isAlive)
+            Boolean(this.getSession(owner.ptyId)?.isAlive)
           ),
         createOrAttach: async (options) => {
           this.assertCreateOrAttachAllowed(options)
-          if (options.agentSessionGeneration && this.sessions.get(options.sessionId)?.isAlive) {
+          if (options.agentSessionGeneration && this.getSession(options.sessionId)?.isAlive) {
             throw new Error('agent_session_claim_unavailable')
           }
           return await createOrAttachTerminalSession(options, {
@@ -146,7 +148,7 @@ export class TerminalHost {
 
   // Why null-not-throw (unlike write/resize): pause/resume are best-effort hints against a session that may have exited.
   pauseProducer(sessionId: string): void {
-    const session = this.sessions.get(sessionId)
+    const session = this.getSession(sessionId)
     if (!session || !session.isAlive) {
       return
     }
@@ -154,20 +156,21 @@ export class TerminalHost {
   }
 
   resumeProducer(sessionId: string): void {
-    this.sessions.get(sessionId)?.resumeProducer()
+    this.getSession(sessionId)?.resumeProducer()
   }
 
   kill(
     sessionId: string,
     opts: { immediate?: boolean; expectedIncarnationId?: string } = {}
   ): Promise<void> {
-    const session = this.sessions.get(sessionId)
+    const record = this.sessions.get(sessionId)
+    const session = sessionFromRecord(record)
     // A caller naming an incarnation is acting on evidence about that process. The id may have
     // gone to a newer shell since, and that one is not theirs to end.
     if (
-      session &&
+      record &&
       opts.expectedIncarnationId !== undefined &&
-      session.incarnationId !== opts.expectedIncarnationId
+      record.incarnationId !== opts.expectedIncarnationId
     ) {
       throw new Error(`PTY incarnation mismatch for ${sessionId}`)
     }
@@ -177,7 +180,7 @@ export class TerminalHost {
         opts.immediate ? this.sessionTeardown.requestImmediate(sessionId) : pending
       )
     }
-    if (session && !session.isAlive) {
+    if (record && !session?.isAlive) {
       // The owner is done with a session that already ended on its own: its exit record has been
       // acted on, so it leaves now. This is the consume half of the held-exit read.
       this.sessions.delete(sessionId)
@@ -189,17 +192,20 @@ export class TerminalHost {
     )
   }
 
-  // Why: dispose a dead session's emulator so exited terminals don't pin their scrollback window for
-  // the daemon's life. A session its owner asked to end has nothing left to tell, so its record goes
-  // now. One that ended on its own is evidence its owner may not have received; that record leaves
-  // when the owner recreates the id or the host is disposed.
+  // Natural exits retain evidence, never the session's operational object graph.
   private reapSession(sessionId: string): void {
-    const session = this.sessions.get(sessionId)
+    const session = this.getSession(sessionId)
     if (!session || session.isAlive) {
       return
     }
+    const exitedSession = session.killRequested ? undefined : exitFromRecord(session)
     session.dispose()
-    if (session.killRequested) {
+    if (this.sessions.get(sessionId) !== session) {
+      return
+    }
+    if (exitedSession) {
+      this.sessions.set(sessionId, exitedSession)
+    } else {
       this.sessions.delete(sessionId)
     }
     this.onSessionReaped?.(sessionId)
@@ -215,7 +221,7 @@ export class TerminalHost {
 
   detachClients(attachments: readonly { sessionId: string; token: symbol }[]): void {
     for (const { sessionId, token } of attachments) {
-      this.sessions.get(sessionId)?.detachClient(token)
+      this.getSession(sessionId)?.detachClient(token)
     }
   }
 
@@ -225,7 +231,7 @@ export class TerminalHost {
 
   // Why: null-not-throw — fetched for the tab-bar icon, so a vanished pane should quietly yield "no agent".
   getForegroundProcess(sessionId: string): string | null {
-    const session = this.sessions.get(sessionId)
+    const session = this.getSession(sessionId)
     if (!session || !session.isAlive) {
       return null
     }
@@ -236,17 +242,11 @@ export class TerminalHost {
     sessionId: string,
     options?: { expectedIncarnationId?: string; steadyState?: boolean }
   ): Promise<TerminalHostProcessInspection> {
-    const session = this.sessions.get(sessionId)
-    // An exited record is evidence only for the incarnation the caller named; a caller naming a
-    // different one, or none, proves nothing about this process and gets the ordinary
-    // missing-session failure (docs/reference/ssh-execution-boundary.md).
+    const record = this.sessions.get(sessionId)
+    const session = sessionFromRecord(record)
+    const observedExit = exitFromRecord(record)
     const exitedSession =
-      session &&
-      !session.isAlive &&
-      session.exitCode !== null &&
-      session.incarnationId === options?.expectedIncarnationId
-        ? { incarnationId: session.incarnationId, code: session.exitCode }
-        : undefined
+      observedExit?.incarnationId === options?.expectedIncarnationId ? observedExit : undefined
     if (!session?.isAlive && !exitedSession) {
       // Preserve the historical synchronous missing-session failure.
       throw new SessionNotFoundError(sessionId)
@@ -265,12 +265,12 @@ export class TerminalHost {
   }
 
   async confirmForegroundProcess(sessionId: string): Promise<string | null> {
-    return confirmTerminalHostForegroundProcess(this.sessions.get(sessionId))
+    return confirmTerminalHostForegroundProcess(this.getSession(sessionId))
   }
 
   async confirmShellForeground(sessionId: string): Promise<boolean> {
-    return confirmTerminalHostShellForeground(this.sessions.get(sessionId), () =>
-      this.sessions.get(sessionId)
+    return confirmTerminalHostShellForeground(this.getSession(sessionId), () =>
+      this.getSession(sessionId)
     )
   }
 
@@ -280,24 +280,24 @@ export class TerminalHost {
 
   // Why: null-not-throw (unlike getAliveSession) — checkpoint is best-effort against a session that may have just exited.
   getSnapshot(sessionId: string, opts: { scrollbackRows?: number } = {}): TerminalSnapshot | null {
-    return getTerminalHostSnapshot(this.sessions.get(sessionId), opts)
+    return getTerminalHostSnapshot(this.getSession(sessionId), opts)
   }
 
   async getSettledSnapshot(
     sessionId: string,
     opts: { scrollbackRows?: number } = {}
   ): Promise<TerminalSnapshot | null> {
-    return getSettledTerminalHostSnapshot(this.sessions.get(sessionId), opts)
+    return getSettledTerminalHostSnapshot(this.getSession(sessionId), opts)
   }
 
   // Why: scan-authority handoff seed (null-not-throw like getSnapshot) — emulator's dangling incomplete escape at the stream position.
   getPartialEscapeTailAnsi(sessionId: string): string {
-    return getTerminalHostPartialEscapeTail(this.sessions.get(sessionId))
+    return getTerminalHostPartialEscapeTail(this.getSession(sessionId))
   }
 
   // Why: renderer diffs this against xterm to detect a dropped/coerced daemon-side resize; null-not-throw like getSnapshot.
   getAppliedSize(sessionId: string): { cols: number; rows: number } | null {
-    return getTerminalHostAppliedSize(this.sessions.get(sessionId))
+    return getTerminalHostAppliedSize(this.getSession(sessionId))
   }
 
   // Why: null-not-throw like getSnapshot — incremental checkpoints are best-effort against a just-exited session.
@@ -306,7 +306,7 @@ export class TerminalHost {
     includeSnapshot: boolean,
     opts: { teardownSnapshot?: boolean } = {}
   ): TakePendingOutputResult | null {
-    return takeTerminalHostPendingOutput(this.sessions.get(sessionId), includeSnapshot, opts)
+    return takeTerminalHostPendingOutput(this.getSession(sessionId), includeSnapshot, opts)
   }
 
   listSessions(): SessionInfo[] {
@@ -337,8 +337,12 @@ export class TerminalHost {
     await shutdownTerminalHostSessions(this.sessions, this.onFinalCheckpoint)
   }
 
+  private getSession(sessionId: string): Session | undefined {
+    return sessionFromRecord(this.sessions.get(sessionId))
+  }
+
   private getAliveSession(sessionId: string): Session {
-    const session = this.sessions.get(sessionId)
+    const session = this.getSession(sessionId)
     if (!session || !session.isAlive) {
       throw new SessionNotFoundError(sessionId)
     }

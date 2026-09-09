@@ -6,6 +6,7 @@ import { getStrictProcessTableSnapshotWithAge } from '../../shared/process-table
 import { resolveRemoteForegroundEvidence } from '../providers/agent-foreground-process'
 import { buildPaneProcessFingerprint } from '../providers/posix-pane-foreground-fingerprint'
 import type { Session } from './session'
+import type { ExitedSession } from './terminal-host-session-record'
 import {
   clearSteadyStateAnchor,
   getSteadyStateAnchor,
@@ -18,9 +19,6 @@ export type TerminalHostProcessInspection = {
   hasChildProcesses: boolean
   foregroundProcessEvidence?: RemoteForegroundEvidence
 }
-
-/** An exit this host watched, for the incarnation the caller named. */
-type ExitedSession = { incarnationId: string; code: number }
 
 /**
  * Tick tiers for a POSIX pane. `cheap` forks `ps` without `tty=`/`command=` (11-38x cheaper)

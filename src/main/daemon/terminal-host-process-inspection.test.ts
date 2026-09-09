@@ -82,6 +82,42 @@ describe('TerminalHost undelivered exits', () => {
     return created.incarnationId
   }
 
+  it('answers during exit broadcast and retains the same proof after reaping', async () => {
+    const { host, lastSubprocess } = createHost()
+    let proofDuringBroadcast: ReturnType<TerminalHost['inspectProcess']> | undefined
+    let incarnationId = ''
+    try {
+      const created = await host.createOrAttach({
+        sessionId: 'broadcast-exit',
+        cols: 80,
+        rows: 24,
+        streamClient: {
+          onData: vi.fn(),
+          onExit: () => {
+            proofDuringBroadcast = host.inspectProcess('broadcast-exit', {
+              expectedIncarnationId: incarnationId
+            })
+          }
+        }
+      })
+      incarnationId = created.incarnationId
+      lastSubprocess().exit(17)
+      const expected = {
+        foregroundProcessEvidence: {
+          verdict: 'exited',
+          ptyIncarnationId: incarnationId,
+          reason: 'pty_exit_17'
+        }
+      }
+      await expect(proofDuringBroadcast).resolves.toMatchObject(expected)
+      await expect(
+        host.inspectProcess('broadcast-exit', { expectedIncarnationId: incarnationId })
+      ).resolves.toMatchObject(expected)
+    } finally {
+      await host.dispose()
+    }
+  })
+
   it('keeps handing a close-and-reopen caller the exit its client never received', async () => {
     const { host, lastSubprocess } = createHost()
     try {
