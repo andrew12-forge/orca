@@ -177,13 +177,11 @@ describe('structured Codex session options', () => {
     expect(snapshot[1]).toMatchObject({ settable: true })
   })
 
-  it('refuses a seeded model the account is not entitled to', async () => {
-    // The seed is a short list of ids Codex *may* offer, gated on auth. Treating it as
-    // the catalog would let this pick through and defer the failure to `turn/start`.
-    const request = vi.fn(async () => ({
-      data: [{ model: 'gpt-live', displayName: 'GPT Live', isDefault: true }],
-      nextCursor: null
-    }))
+  it('refuses a seeded model the account is not entitled to when nothing is listed', async () => {
+    // The seed is a short list of ids Codex *may* offer, gated on auth. An empty
+    // `model/list` is the one state where a seed floor would become `catalog.models`,
+    // letting this pick pass the host guard and deferring the failure to `turn/start`.
+    const request = vi.fn(async () => ({ data: [], nextCursor: null }))
 
     await expect(
       applyCodexStructuredSessionOption(optionSession(request), 'model', 'gpt-5.6-sol', undefined)
