@@ -75,7 +75,7 @@ function claudeAdapterStub(): StructuredAgentSessionAdapter {
 }
 
 describe('Codex structured session close lifecycle', () => {
-  it('settles a naming turn still in flight instead of leaving it to time out', async () => {
+  it('hands an unproven naming turn to the orphan registry instead of retaining it', async () => {
     const connection: CodexAppServerConnection = {
       pid: 4321,
       closed: true,
@@ -125,7 +125,9 @@ describe('Codex structured session close lifecycle', () => {
     })
 
     expect(naming.close).toHaveBeenCalledOnce()
-    expect(session.naming).toBe(naming)
+    // Ownership moves to the registry: the session must not keep an unproven
+    // best-effort child that a later close would have to wait on.
+    expect(session.naming).toBeNull()
   })
 
   it('forwards a one-shot exit when lifecycle admission is rejected', () => {

@@ -15,6 +15,7 @@ import type { CodexJournalTranslationAdmission } from './codex-structured-journa
 import { answerCodexPrompt } from './codex-structured-prompt-replies'
 import { dispatchCodexTurn, isCodexTurnOptionKey } from './codex-structured-turn-start'
 import { supportsCodexStructuredLocation } from './codex-structured-location-support'
+import { CodexNamingOrphanRegistry } from './codex-naming-orphan-registry'
 import { CodexStructuredSessionTeardown } from './codex-structured-session-teardown'
 import {
   applyCodexStructuredSessionOption,
@@ -52,11 +53,13 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
   private readonly compactions = new StructuredSessionCompaction()
   private readonly sessions = new Map<string, CodexSession>()
   private readonly acquisitions = new CodexAcquisitionRegistry()
+  private readonly namingOrphans: CodexNamingOrphanRegistry
   private readonly turnCancellation: CodexStructuredTurnCancellation
   private readonly notificationRetries: ReturnType<typeof createCodexStructuredNotificationRetry>
   private readonly teardown: CodexStructuredSessionTeardown
 
   constructor(private readonly deps: CodexStructuredSessionAdapterDeps) {
+    this.namingOrphans = new CodexNamingOrphanRegistry(deps.onNamingError)
     this.notificationRetries = createCodexStructuredNotificationRetry({
       sessionFor: (sessionId) => this.sessions.get(sessionId),
       translate: (sessionId, session, method, params) =>
@@ -69,7 +72,8 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
       ...(deps.onBackgroundTasksChanged
         ? { onBackgroundTasksChanged: deps.onBackgroundTasksChanged }
         : {}),
-      forgetNotificationRetries: (sessionId) => this.notificationRetries.clear(sessionId, null)
+      forgetNotificationRetries: (sessionId) => this.notificationRetries.clear(sessionId, null),
+      namingOrphans: this.namingOrphans
     })
     this.turnCancellation = new CodexStructuredTurnCancellation({
       captureTurnProcesses: deps.captureTurnProcesses,
@@ -94,6 +98,7 @@ export class CodexStructuredSessionAdapter implements StructuredAgentSessionAdap
       deps: this.deps,
       sessions: this.sessions,
       acquisitions: this.acquisitions,
+      namingOrphans: this.namingOrphans,
       turnCancellation: this.turnCancellation,
       notificationRetries: this.notificationRetries,
       deliver: (acquisition, sessionId, event, retainedBytes) =>

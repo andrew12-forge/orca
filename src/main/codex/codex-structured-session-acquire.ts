@@ -9,6 +9,7 @@ import {
   stopSupersededCodexAcquisition
 } from './codex-structured-acquisition-lifecycle'
 import { CodexBackgroundTaskTracker } from './codex-background-task-tracker'
+import type { CodexNamingOrphanRegistry } from './codex-naming-orphan-registry'
 import { CodexSubagentExecutions } from './codex-subagent-executions'
 import { createCodexJournalTranslator } from './codex-structured-journal-translation'
 import { openCodexAppServerConnection } from './codex-app-server-connection'
@@ -40,6 +41,7 @@ export async function acquireCodexStructuredSession(input: {
   deps: CodexStructuredSessionAdapterDeps
   sessions: Map<string, CodexSession>
   acquisitions: CodexAcquisitionRegistry
+  namingOrphans: CodexNamingOrphanRegistry
   turnCancellation: CodexStructuredTurnCancellation
   notificationRetries: CodexStructuredNotificationRetry
   deliver: (
@@ -65,6 +67,7 @@ export async function acquireCodexStructuredSession(input: {
     deps,
     sessions,
     acquisitions,
+    namingOrphans,
     turnCancellation,
     notificationRetries
   } = input
@@ -95,7 +98,7 @@ export async function acquireCodexStructuredSession(input: {
       previous: previousAttempt
     })
     acquisitions.assertCurrent(sessionId, attempt)
-    if (!(await closeCodexPublishedSession(sessions, sessionId, deps.onEvent))) {
+    if (!(await closeCodexPublishedSession(sessions, sessionId, deps.onEvent, { namingOrphans }))) {
       throw new Error(`codex app-server for session ${sessionId} could not be stopped`)
     }
     acquisitions.assertCurrent(sessionId, attempt)
