@@ -2,6 +2,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  ensureLocalRuntimeCapabilities,
   readLocalRuntimeCapabilities,
   readLocalRuntimeCapabilitiesOrUnknown,
   refreshLocalRuntimeCapabilities,
@@ -50,6 +51,8 @@ describe('local runtime capabilities', () => {
 
     const first = refreshLocalRuntimeCapabilities()
     const second = refreshLocalRuntimeCapabilities()
+    // The probe starts one microtask into the chain; let it run before settling it.
+    await Promise.resolve()
     resolve({ capabilities: ['agent-session.structured.v1'] })
 
     await expect(Promise.all([first, second])).resolves.toEqual([
@@ -81,5 +84,32 @@ describe('local runtime capabilities', () => {
       .mockResolvedValue({ capabilities: ['agent-session.structured.v1'] })
     await refreshLocalRuntimeCapabilities()
     expect(readLocalRuntimeCapabilitiesOrUnknown()).toEqual(['agent-session.structured.v1'])
+  })
+  it('ensure probes the runtime when no answer has landed yet', async () => {
+    setLocalRuntimeCapabilitiesForTests(null)
+    const getStatus = vi.fn(async () => ({ capabilities: ['agent-session.structured.v1'] }))
+    Object.assign(window, { api: { runtime: { getStatus } } })
+
+    await expect(ensureLocalRuntimeCapabilities()).resolves.toEqual(['agent-session.structured.v1'])
+    expect(getStatus).toHaveBeenCalledOnce()
+  })
+
+  it('ensure returns the cached answer without probing again', async () => {
+    setLocalRuntimeCapabilitiesForTests(['agent-session.structured.v1'])
+    const getStatus = vi.fn(async () => ({ capabilities: [] }))
+    Object.assign(window, { api: { runtime: { getStatus } } })
+
+    await expect(ensureLocalRuntimeCapabilities()).resolves.toEqual(['agent-session.structured.v1'])
+    expect(getStatus).not.toHaveBeenCalled()
+  })
+
+  it('ensure stays unknown after a failed probe', async () => {
+    setLocalRuntimeCapabilitiesForTests(null)
+    const getStatus = vi.fn(async () => {
+      throw new Error('offline')
+    })
+    Object.assign(window, { api: { runtime: { getStatus } } })
+
+    await expect(ensureLocalRuntimeCapabilities()).resolves.toBeNull()
   })
 })

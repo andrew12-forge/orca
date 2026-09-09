@@ -15,9 +15,26 @@ export function readLocalRuntimeCapabilitiesOrUnknown(): readonly RuntimeCapabil
   return localRuntimeCapabilities
 }
 
+/** Like `readLocalRuntimeCapabilitiesOrUnknown`, but probes the local runtime when no answer
+ *  has landed yet. Launch-route decisions taken before the hydration-gated refresh runs must
+ *  wait for the probe instead of reading "not asked yet" as "unsupported": a pre-hydration
+ *  create otherwise silently degrades structured native chat to the legacy route (#19154).
+ *  Still `null` after an actually failed probe. */
+export async function ensureLocalRuntimeCapabilities(): Promise<
+  readonly RuntimeCapability[] | null
+> {
+  if (localRuntimeCapabilities !== null) {
+    return localRuntimeCapabilities
+  }
+  await refreshLocalRuntimeCapabilities()
+  return localRuntimeCapabilities
+}
+
 export function refreshLocalRuntimeCapabilities(): Promise<readonly RuntimeCapability[]> {
-  refreshPromise ??= window.api.runtime
-    .getStatus()
+  // Starts inside the chain so a broken bridge rejects into the catch below
+  // instead of throwing synchronously out of the ??= expression.
+  refreshPromise ??= Promise.resolve()
+    .then(() => window.api.runtime.getStatus())
     .then((status) => {
       localRuntimeCapabilities = [...(status.capabilities ?? [])]
       return localRuntimeCapabilities
@@ -35,8 +52,8 @@ export function refreshLocalRuntimeCapabilities(): Promise<readonly RuntimeCapab
 }
 
 export function setLocalRuntimeCapabilitiesForTests(
-  capabilities: readonly RuntimeCapability[]
+  capabilities: readonly RuntimeCapability[] | null
 ): void {
-  localRuntimeCapabilities = [...capabilities]
+  localRuntimeCapabilities = capabilities === null ? null : [...capabilities]
   refreshPromise = null
 }
