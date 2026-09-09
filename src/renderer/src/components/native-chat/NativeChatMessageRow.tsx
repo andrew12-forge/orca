@@ -8,10 +8,15 @@ import {
   isSubagentGroupFallbackText,
   subagentGroupBlocks
 } from '../../../../shared/native-chat-subagent-summary'
-import { isSubagentGroupBlock, type NativeChatMessage } from '../../../../shared/native-chat-types'
+import {
+  isSubagentGroupBlock,
+  type NativeChatMessage,
+  type NativeChatToolCallBlock
+} from '../../../../shared/native-chat-types'
 import { splitNativeChatBlocks } from './native-chat-tool-fold'
 import { NativeChatToolRun } from './NativeChatToolRun'
 import { NativeChatReasoningRow } from './NativeChatReasoningRow'
+import { NativeChatNoticeRow } from './NativeChatNoticeRow'
 import { NativeChatMessageTimestamp } from './NativeChatMessageTimestamp'
 import { nativeChatProseToMarkdown } from './native-chat-prose'
 import {
@@ -19,6 +24,7 @@ import {
   NativeChatImageAttachments,
   ProviderFrameRow
 } from './NativeChatTranscriptChrome'
+import type { NativeChatDiffReveal } from './native-chat-turn-diffs'
 import type { RuntimeFileOperationArgs } from '@/runtime/runtime-file-client'
 
 /** One message: its prose first, then a collapsible run folding all of the
@@ -28,6 +34,9 @@ import type { RuntimeFileOperationArgs } from '@/runtime/runtime-file-client'
  *  keep their block identity, so only the changed row re-renders. */
 export const MessageRow = memo(function MessageRow({
   message,
+  previousTodoWrite,
+  previousUpdatePlan,
+  revealedDiff,
   expandSignal,
   activeTurnIsWorking,
   onScrollMessageToTop,
@@ -39,6 +48,9 @@ export const MessageRow = memo(function MessageRow({
   runtimeContext
 }: {
   message: NativeChatMessage
+  previousTodoWrite?: NativeChatToolCallBlock
+  previousUpdatePlan?: NativeChatToolCallBlock
+  revealedDiff?: NativeChatDiffReveal
   expandSignal: boolean
   activeTurnIsWorking?: boolean
   /** Align this message's top to the top of the scroll viewport. */
@@ -95,6 +107,24 @@ export const MessageRow = memo(function MessageRow({
     return null
   }
 
+  const notice = isSystem
+    ? message.blocks.find(
+        (block) =>
+          block.type === 'text' && (block.presentation !== undefined || block.tone !== undefined)
+      )
+    : undefined
+  if (notice?.type === 'text') {
+    return (
+      <div ref={rowRef}>
+        <NativeChatNoticeRow
+          block={notice}
+          onLinkClick={onLinkClick}
+          allowFileUriLinks={allowFileUriLinks}
+        />
+      </div>
+    )
+  }
+
   if (providerFrame) {
     return (
       <div ref={rowRef}>
@@ -135,7 +165,7 @@ export const MessageRow = memo(function MessageRow({
         <NativeChatMessageTimestamp
           timestamp={message.timestamp}
           focusable
-          className="pointer-events-none select-none opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+          className="select-none transition-opacity can-hover:pointer-events-none can-hover:opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-has-[:focus-visible]:pointer-events-auto group-has-[:focus-visible]:opacity-100"
         />
         {deliveryFailed ? (
           <div className="max-w-[85%] text-[11px] text-destructive/80">
@@ -192,6 +222,10 @@ export const MessageRow = memo(function MessageRow({
       {tools.length > 0 || subagentGroups.length > 0 ? (
         <NativeChatToolRun
           blocks={tools}
+          previousTodoWrite={previousTodoWrite}
+          previousUpdatePlan={previousUpdatePlan}
+          revealedDiff={revealedDiff}
+          onRevealDiff={onScrollMessageToTop}
           onLinkClick={onLinkClick}
           subagentGroups={subagentGroups}
           expandSignal={expandSignal}
@@ -205,7 +239,7 @@ export const MessageRow = memo(function MessageRow({
           markdown={markdown}
           timestamp={message.timestamp}
           onScrollToTop={scrollToTop}
-          className="pointer-events-none mt-1 -mb-5 w-fit select-none opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+          className="mt-1 -mb-5 w-fit select-none transition-opacity can-hover:pointer-events-none can-hover:opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-has-[:focus-visible]:pointer-events-auto group-has-[:focus-visible]:opacity-100"
         />
       ) : null}
     </div>

@@ -585,6 +585,16 @@ describe('codex item bodies', () => {
     })
   })
 
+  it('preserves plan prose documents byte-for-byte as status text', () => {
+    const text =
+      '  # Implementation plan\r\n\r\n- [ ] Preserve prose\r\n- [x] Keep café → 日本語\r\n\r\n```ts\r\nconst task = "pending"\r\n```\r\n  '
+
+    expect(codexJournalItem({ type: 'plan', id: 'plan-document', text })).toEqual({
+      body: { kind: 'status', text, presentation: 'plan-document' },
+      handled: true
+    })
+  })
+
   it('renders reasoning as a message and exposes an unknown item as a provider frame', () => {
     expect(codexItemBody({ type: 'reasoning', id: 'r', text: 'thinking' })).toEqual({
       kind: 'message',
@@ -825,15 +835,16 @@ describe('codex item bodies', () => {
     })
     expect(codexStreamingJournalItem({ type: 'plan', id: 'p' }, 'First\nSecond')).toEqual({
       handled: true,
-      body: { kind: 'status', text: 'First\nSecond' }
+      body: { kind: 'status', text: 'First\nSecond', presentation: 'plan-document' }
     })
   })
 
-  it('omits blank reasoning and preserves the exact plan fallback body', () => {
+  it('omits blank reasoning and preserves the plan document body', () => {
     expect(codexItemBody({ type: 'reasoning', id: 'r', text: ' \n ' })).toBeNull()
     expect(codexItemBody({ type: 'plan', id: 'p', text: 'First\nSecond' })).toEqual({
       kind: 'status',
-      text: 'First\nSecond'
+      text: 'First\nSecond',
+      presentation: 'plan-document'
     })
   })
 
