@@ -1,4 +1,3 @@
-import { structuredAgentSessionForkAvailable } from '@/runtime/structured-agent-session-client'
 import * as forkState from './structured-agent-session-fork-state'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as conversationCommands from './structured-conversation-command-send'
@@ -26,7 +25,10 @@ import {
 } from '../../../../shared/structured-agent-session-options'
 import { activeStructuredAgentSessionTurnId } from '../../../../shared/structured-agent-session-projection'
 import type { RuntimeClientTarget } from '@/runtime/runtime-rpc-client'
-import { callStructuredAgentSession } from '@/runtime/structured-agent-session-client'
+import {
+  callStructuredAgentSession,
+  structuredAgentSessionForkAvailable
+} from '@/runtime/structured-agent-session-client'
 import { useStructuredAgentSessionHold } from './use-structured-agent-session-hold'
 import { useStructuredAgentSessionRead } from './use-structured-agent-session-read'
 import {

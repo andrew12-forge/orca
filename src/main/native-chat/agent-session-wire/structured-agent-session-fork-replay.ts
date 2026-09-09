@@ -13,7 +13,7 @@ import type { StructuredAgentSessionMutationContext } from './structured-agent-s
 import type { StructuredAgentSessionCaller } from './structured-agent-session-host-types'
 
 export async function prepareStructuredForkReplay(
-  context: StructuredAgentSessionMutationContext,
+  context: Pick<StructuredAgentSessionMutationContext, 'deps' | 'sessions' | 'now'>,
   caller: StructuredAgentSessionCaller,
   params: AgentSessionAttachParams
 ): Promise<{

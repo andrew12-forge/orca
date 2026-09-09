@@ -1,4 +1,4 @@
-import { createStructuredAgentSessionFork } from './structured-agent-session-fork'
+import { createStructuredAgentSessionFork } from './structured-agent-session-host-fork'
 import type { AgentSessionRewindParams } from '../../../shared/agent-session-rewind'
 import { rewindStructuredAgentSession } from './structured-agent-session-rewind'
 import { StructuredConversationCommandController } from './structured-conversation-command-controller'
@@ -86,10 +86,7 @@ export class StructuredAgentSessionHost {
   private readonly eventRecovery: StructuredAgentSessionEventRecovery
   private readonly backgroundTasks: StructuredAgentSessionBackgroundTaskChannel
 
-  fork = createStructuredAgentSessionFork(
-    () => this.mutationContext(),
-    () => this.attachContext()
-  )
+  fork = createStructuredAgentSessionFork(() => this.attachContext())
 
   constructor(readonly deps: StructuredAgentSessionHostDeps) {
     this.backgroundTasks = new StructuredAgentSessionBackgroundTaskChannel(

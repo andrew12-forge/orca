@@ -23,7 +23,7 @@ import type { StructuredAgentSessionCaller } from './structured-agent-session-ho
 import { conversationCommandBlocked } from './structured-conversation-command-admission'
 
 export function forkStructuredAgentSession(
-  context: StructuredAgentSessionMutationContext,
+  context: Pick<StructuredAgentSessionMutationContext, 'deps' | 'sessions' | 'serialize' | 'now'>,
   attachContext: StructuredAgentSessionAttachContext,
   caller: StructuredAgentSessionCaller,
   params: AgentSessionAttachParams,
@@ -157,15 +157,4 @@ function refuse(reason: AgentSessionRewindReason): AgentSessionMutationResult<ne
       forkReason: reason
     }
   }
-}
-
-export function createStructuredAgentSessionFork(
-  context: () => StructuredAgentSessionMutationContext,
-  attachContext: () => StructuredAgentSessionAttachContext
-) {
-  return (
-    caller: StructuredAgentSessionCaller,
-    params: AgentSessionAttachParams,
-    source: AgentSessionForkSource
-  ) => forkStructuredAgentSession(context(), attachContext(), caller, params, source)
 }
