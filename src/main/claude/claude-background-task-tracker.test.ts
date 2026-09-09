@@ -114,6 +114,56 @@ describe('ClaudeBackgroundTaskTracker', () => {
     })
   })
 
+  it('empties only between one task retiring and the next starting', () => {
+    // The strip's mid-turn unmount in a sequential fan-out is TRUTHFUL: A leaves
+    // on the provider's own terminal frame for A, B does not exist yet, and
+    // nothing sweeps A early. An empty roster means no task is running.
+    const tracker = new ClaudeBackgroundTaskTracker()
+    tracker.observe({ type: 'user' }, true)
+    tracker.observe(
+      system('task_started', { task_id: 'A', task_type: 'local_agent', is_backgrounded: false })
+    )
+    expect(tracker.state?.tasks).toEqual([{ id: 'A', kind: 'agent', stoppable: false }])
+    tracker.observe(system('task_notification', { task_id: 'A', status: 'completed' }))
+    expect(tracker.state).toBeNull()
+    tracker.observe(
+      system('task_started', { task_id: 'B', task_type: 'local_agent', is_backgrounded: false })
+    )
+    expect(tracker.state?.tasks).toEqual([{ id: 'B', kind: 'agent', stoppable: false }])
+
+    // Backgrounded work spanning the same gap holds the roster open, so an
+    // empty one is never work the strip is hiding.
+    const spanned = new ClaudeBackgroundTaskTracker()
+    spanned.observe({ type: 'user' }, true)
+    spanned.observe(
+      system('task_started', { task_id: 'bg', task_type: 'local_bash', is_backgrounded: true })
+    )
+    spanned.observe(
+      system('task_started', { task_id: 'A', task_type: 'local_agent', is_backgrounded: false })
+    )
+    spanned.observe(system('task_notification', { task_id: 'A', status: 'completed' }))
+    expect(spanned.state?.tasks).toEqual([{ id: 'bg', kind: 'command' }])
+  })
+
+  it('settles a previous turn the way the subagent roster settles it', () => {
+    // On this same frame the roster's `settleTurn` moves a still-working
+    // FOREGROUND child to `unverifiable` and leaves a backgrounded one alone.
+    // The strip has no `unverifiable` row, so keeping one would assert `live`
+    // for work Orca has already stopped vouching for.
+    const tracker = new ClaudeBackgroundTaskTracker()
+    tracker.observe({ type: 'user' }, true)
+    tracker.observe(
+      system('task_started', { task_id: 'fore', task_type: 'local_agent', is_backgrounded: false })
+    )
+    tracker.observe(
+      system('task_started', { task_id: 'back', task_type: 'local_bash', is_backgrounded: true })
+    )
+
+    // No `result` for that turn; the next one starting is its only end.
+    tracker.observe({ type: 'user' }, true)
+    expect(tracker.state?.tasks).toEqual([{ id: 'back', kind: 'command' }])
+  })
+
   it('retires a phantom foreground row when the next turn starts', () => {
     // A foreground `task_started` with no turn open has no `result` coming to
     // retire it, so it would sit in the strip — with no stop of its own — and
