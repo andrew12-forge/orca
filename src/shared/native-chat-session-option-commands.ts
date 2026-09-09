@@ -165,9 +165,8 @@ export function recordNativeChatSessionOptionCommand(args: {
     canonicalize: (value) =>
       /\s/.test(value)
         ? null
-        : // Fall back to the seed: an alias this host's CLI no longer lists is
-          // still a legitimate thing to type, and callers reconcile it back into
-          // the list (withTrackedNativeChatModel) rather than blanking the row.
+        : // Fall back to the seed: an alias this host's CLI no longer lists is still a
+          // legitimate thing to type, and is named as the current value even unlisted.
           (matchNativeChatCatalogModelId({ ...catalog, models: [...models] }, value) ??
           matchNativeChatCatalogModelId(catalog, value)),
     effectiveModelId: resolveEffectiveNativeChatModelId(catalog, models, record),

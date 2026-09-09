@@ -148,9 +148,10 @@ describe('structured Codex session options', () => {
     })
   })
 
-  it('falls back to the seed when model/list answers nothing for a running thread', async () => {
-    // The thread still runs a model, and an empty list carries no options — the snapshot
-    // returns nothing at all for one, taking the effort pill with the model pill.
+  it('keeps both pills for a running thread when model/list answers nothing', async () => {
+    // An empty list is no evidence about what this account may pick, so nothing is
+    // offered. The snapshot still names what runs and draws effort from the catalog's
+    // launch-safe set, rather than blanking both pills or inventing five seeded ids.
     const request = vi.fn(async () => ({ data: [], nextCursor: null }))
 
     const result = await readCodexStructuredSessionOptions({
@@ -158,13 +159,8 @@ describe('structured Codex session options', () => {
       current: { model: 'gpt-5.9-secret' }
     })
 
-    expect(result.current.model).toBe('gpt-5.9-secret')
-    expect(result.models.map((model) => model.id)).toEqual(
-      CODEX_SESSION_OPTION_CATALOG.models.map((model) => model.id)
-    )
-    expect(result.models.some((model) => model.id === 'gpt-5.9-secret')).toBe(false)
+    expect(result).toEqual({ models: [], current: { model: 'gpt-5.9-secret' } })
 
-    // What the floor is for: both pills survive, and the pill still names what runs.
     const snapshot = structuredAgentSessionOptionSnapshot(
       applyStructuredAgentSessionOptions(
         createStructuredAgentSessionOptionState('codex'),
@@ -176,9 +172,22 @@ describe('structured Codex session options', () => {
     // Any source but `unknown` makes the pill name the value it carries.
     expect(snapshot[0]).toMatchObject({
       valueSource: 'dispatched',
-      kind: { type: 'select', currentValue: 'gpt-5.9-secret' }
+      kind: { type: 'select', currentValue: 'gpt-5.9-secret', choices: [] }
     })
     expect(snapshot[1]).toMatchObject({ settable: true })
+  })
+
+  it('refuses a seeded model the account is not entitled to', async () => {
+    // The seed is a short list of ids Codex *may* offer, gated on auth. Treating it as
+    // the catalog would let this pick through and defer the failure to `turn/start`.
+    const request = vi.fn(async () => ({
+      data: [{ model: 'gpt-live', displayName: 'GPT Live', isDefault: true }],
+      nextCursor: null
+    }))
+
+    await expect(
+      applyCodexStructuredSessionOption(optionSession(request), 'model', 'gpt-5.6-sol', undefined)
+    ).rejects.toThrow('codex app-server does not offer model gpt-5.6-sol')
   })
 
   it('still refuses a thread with neither a listed model nor a current one', async () => {

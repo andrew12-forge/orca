@@ -6,6 +6,7 @@ import {
 } from './native-chat-session-option-cache'
 import { createNativeChatPtySessionOptions } from './native-chat-pty-session-options'
 import { mergeDiscoveredAuthoritativeModels } from '../../../../shared/agent-session-option-catalog'
+import { CLAUDE_SESSION_OPTION_CATALOG } from '../../../../shared/agent-session-option-catalog-claude-codex'
 import { GROK_SESSION_OPTION_CATALOG } from '../../../../shared/agent-session-option-catalog-grok'
 import {
   resolveNativeChatSessionOptionDefaults,
@@ -843,6 +844,51 @@ describe('native chat PTY session options', () => {
       expect.objectContaining({ adoptModelAsLaunchDefault: true })
     )
   })
+
+  it.each([true, false])(
+    'never adopts a model no list carries as the launch default (discovered: %s)',
+    async (discovered) => {
+      // Regression: `worker-start --model claude-opus-5` tracks an id neither the probe
+      // nor the seed carries. Its effort row is drawn from the launch-safe set, so
+      // setting effort persisted `model: claude-opus-5` and every later Claude native
+      // chat launched with a flag the account may not have. Claude never marks its
+      // discovered list authoritative, so neither branch of the guard caught it.
+      let persisted: PersistedNativeChatSessionOptions = {}
+      seedNativeChatAppliedSessionOptions('pty-1', 'claude', { model: 'claude-opus-5' })
+      const surface = createNativeChatPtySessionOptions({
+        agent: 'claude',
+        scopeKey: 'pty-1',
+        mode: 'live',
+        ...(discovered ? { initialModels: CLAUDE_SESSION_OPTION_CATALOG.models } : {}),
+        dispatchCommand: vi.fn().mockResolvedValue({ outcome: 'applied' }),
+        persistSelection: ({ modelId, optionId, value, adoptModelAsLaunchDefault }) => {
+          persisted = updateNativeChatSessionOptionDefaults({
+            persisted,
+            agent: 'claude',
+            modelId,
+            optionId,
+            value,
+            adoptModelAsLaunchDefault
+          })
+        }
+      })!
+
+      // The pill still names what the session runs — this fix withholds the flag, not the truth.
+      expect(surface.getSnapshot().find(({ id }) => id === 'model')).toMatchObject({
+        kind: { currentValue: 'claude-opus-5' }
+      })
+
+      await surface.setOption('effort', 'max')
+
+      expect(persisted.claude?.model).toBeUndefined()
+      // Still scoped to that id, so an explicit reselect gets its value back.
+      expect(persisted.claude?.valuesByModel?.['claude-opus-5']?.effort).toBe('max')
+
+      // A seeded alias is unaffected: picking it still becomes the launch default.
+      await surface.setOption('model', 'opus')
+      expect(persisted.claude?.model).toBe('opus')
+    }
+  )
 
   it('carries an effort set under a probe-confirmed default into later launches', async () => {
     // Regression: the value persisted under the model id while `model` stayed unset, so

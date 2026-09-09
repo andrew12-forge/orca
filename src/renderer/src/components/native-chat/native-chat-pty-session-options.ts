@@ -1,4 +1,5 @@
 import {
+  findCatalogModel,
   getAgentSessionOptionCatalog,
   type CatalogModel
 } from '../../../../shared/agent-session-option-catalog'
@@ -142,11 +143,17 @@ export function createNativeChatPtySessionOptions(
    *  persist time because a probe can settle mid-pick. Before one, `isDefault` is just
    *  the seed's guess, so only an id the session actually tracks is evidence of
    *  anything; after one, an authoritative list that omits the id proves it retired —
-   *  adopting either would emit an `-m` that is fatal on an account without it. */
-  const modelIsAdoptableAsLaunchDefault = (modelId: string): boolean =>
-    modelsAreDiscovered
+   *  adopting either would emit an `-m` that is fatal on an account without it. An id
+   *  neither list carries has no such evidence at all: it reached us as a raw launch
+   *  flag or a typed `/model`, and every option row it draws would otherwise persist it. */
+  const modelIsAdoptableAsLaunchDefault = (modelId: string): boolean => {
+    if (!models.some((model) => model.id === modelId) && !findCatalogModel(catalog, modelId)) {
+      return false
+    }
+    return modelsAreDiscovered
       ? !catalog.discoveredModelsAreAuthoritative || models.some((model) => model.id === modelId)
       : record.model !== undefined
+  }
 
   /** Every persist path — picker applies and typed commands — funnels through here. */
   const persist = (modelId: string | null, optionId: string, value: SessionOptionValue): void => {

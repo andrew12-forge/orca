@@ -3,7 +3,9 @@ import {
   CLAUDE_SESSION_OPTION_CATALOG,
   CODEX_SESSION_OPTION_CATALOG
 } from './agent-session-option-catalog-claude-codex'
+import { CURSOR_SESSION_OPTION_CATALOG } from './agent-session-option-catalog-gemini-cursor'
 import { GROK_SESSION_OPTION_CATALOG } from './agent-session-option-catalog-grok'
+import type { AgentSessionOptionCatalog } from './agent-session-option-catalog'
 import {
   buildNativeChatSessionOptionCommand,
   parseBuiltSessionOptionCommand,
@@ -85,6 +87,41 @@ describe('buildNativeChatSessionOptionCommand', () => {
       command: '/model',
       delivery: 'type'
     })
+  })
+
+  it('composes an unlisted model from the launch-safe options, not from nothing', () => {
+    // No shipped catalog both composes options into the model value and defines
+    // `unknownModelOptions`, so this pins the rule at the emit site: the composed
+    // string must carry the same defaults a launch of that id would resolve.
+    const composing: AgentSessionOptionCatalog = {
+      ...CURSOR_SESSION_OPTION_CATALOG,
+      unknownModelOptions: [
+        {
+          id: 'effort',
+          label: 'Effort',
+          kind: {
+            type: 'select',
+            choices: [{ value: 'high', label: 'High' }],
+            defaultValue: 'high'
+          },
+          apply: { composedIntoModel: true }
+        }
+      ]
+    }
+    const record = createNativeChatSessionOptionRecord('cursor')
+    record.model = { value: 'gpt-unlisted', source: 'dispatched' }
+
+    expect(
+      buildNativeChatSessionOptionCommand({
+        optionId: 'fastMode',
+        value: true,
+        apply: { composedIntoModel: true },
+        modelId: 'gpt-unlisted',
+        catalog: composing,
+        models: CURSOR_SESSION_OPTION_CATALOG.models,
+        record
+      })
+    ).toBe('/model gpt-unlisted-high-fast')
   })
 })
 
@@ -388,5 +425,28 @@ describe('recordNativeChatSessionOptionCommand for grok', () => {
       command: '/model grok-4.5'
     })
     expect(record.model).toEqual({ value: 'grok-4.5', source: 'dispatched' })
+  })
+
+  it('records and persists a typed option under a model no list carries', () => {
+    // `worker-start --model claude-opus-5` leaves an id neither the probe nor the seed
+    // carries. Its rows come off the launch-safe set, so a typed `/effort` under it is
+    // real state — resolving through the model list alone dropped it silently.
+    const record = claudeRecord('claude-opus-5')
+    const persist = vi.fn()
+
+    expect(
+      recordNativeChatSessionOptionCommand({
+        catalog: CLAUDE_SESSION_OPTION_CATALOG,
+        models: CLAUDE_SESSION_OPTION_CATALOG.models,
+        record,
+        command: '/effort max',
+        persist
+      })
+    ).toEqual({ changed: true, opensAgentPicker: false })
+    expect(record.valuesByModel['claude-opus-5']?.effort).toEqual({
+      value: 'max',
+      source: 'dispatched'
+    })
+    expect(persist).toHaveBeenCalledWith('claude-opus-5', 'effort', 'max')
   })
 })

@@ -140,6 +140,11 @@ export async function dispatchStructuredAgentSessionComposerCommand(
     (entry) => entry.value.toLowerCase() === normalized || entry.label.toLowerCase() === normalized
   )
   if (!choice) {
+    // Why: the running value is named but never offered, so rejecting it would
+    // contradict the pill; re-stating what is already set is a no-op.
+    if (descriptor.kind.currentValue?.toLowerCase() === normalized) {
+      return { handled: true, accepted: true, error: null }
+    }
     return {
       handled: true,
       accepted: false,

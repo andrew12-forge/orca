@@ -4,6 +4,7 @@ import {
   isStructuredAgentSessionComposerCommand,
   structuredSlashCommands
 } from './structured-agent-session-composer'
+import type { SessionOptionDescriptor } from './native-chat-session-options'
 
 describe('structuredSlashCommands', () => {
   // The composer menu and the dispatcher read this one list. When they disagreed,
@@ -83,6 +84,45 @@ describe('dispatchStructuredAgentSessionComposerCommand', () => {
       }
     }
   )
+  it('accepts the running model as a no-op even though it is never offered', async () => {
+    // The pill names an unlisted model the session actually runs; typing that same id
+    // used to be refused as "not an available model", contradicting the pill.
+    const setOption = vi.fn(async () => true)
+    const running = {
+      ...controller,
+      setOption,
+      snapshot: [
+        {
+          id: 'model',
+          label: 'Model',
+          category: 'model',
+          kind: {
+            type: 'select',
+            currentValue: 'claude-opus-5',
+            choices: [{ value: 'gpt-live', label: 'GPT Live' }]
+          },
+          valueSource: 'reported',
+          transport: 'agent-session',
+          settable: true
+        }
+      ] satisfies SessionOptionDescriptor[]
+    }
+
+    expect(
+      await dispatchStructuredAgentSessionComposerCommand('/model Claude-Opus-5', running)
+    ).toEqual({ handled: true, accepted: true, error: null })
+    expect(setOption).not.toHaveBeenCalled()
+
+    // A genuinely unavailable id is still refused.
+    expect(
+      await dispatchStructuredAgentSessionComposerCommand('/model gpt-retired', running)
+    ).toEqual({
+      handled: true,
+      accepted: false,
+      error: 'gpt-retired is not an available model for this chat session.'
+    })
+  })
+
   it('retains a draft on unsupported hosts and rejects arguments before dispatch', async () => {
     expect(await dispatchStructuredAgentSessionComposerCommand('/clear', controller)).toMatchObject(
       { handled: true, accepted: false, error: '/clear is not supported by this chat host.' }

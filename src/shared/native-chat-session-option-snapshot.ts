@@ -212,10 +212,15 @@ export function buildNativeChatSessionOptionSnapshot(args: {
   liveTransport: NativeChatLiveOptionTransport
 }): SessionOptionDescriptor[] {
   const { catalog, models, record, mode, modelLabel, liveTransport } = args
-  if (models.length === 0) {
+  const modelTracked = record.model
+  const trackedModelId = typeof modelTracked?.value === 'string' ? modelTracked.value : null
+  const defaultModelId = cliDefaultModelId(catalog, models, trackedModelId)
+  const effectiveModelId = trackedModelId ?? defaultModelId
+  // Why: an empty list only means "nothing to show" when no id resolves either. A session
+  // that demonstrably runs a model still names it, with no choices to offer beside it.
+  if (models.length === 0 && !effectiveModelId) {
     return []
   }
-  const modelTracked = record.model
   // Why: every row is an official model — the catalog's or a probe's. An id outside
   // both is never offered as a choice, but it stays the current value below: the
   // session is running it, and naming it beats showing a model that it is not.
@@ -224,9 +229,6 @@ export function buildNativeChatSessionOptionSnapshot(args: {
     label,
     ...(description ? { description } : {})
   }))
-  const trackedModelId = typeof modelTracked?.value === 'string' ? modelTracked.value : null
-  const defaultModelId = cliDefaultModelId(catalog, models, trackedModelId)
-  const effectiveModelId = trackedModelId ?? defaultModelId
   const modelAction = actionForApply(catalog.modelApply, modelTracked, mode, liveTransport)
   const snapshot: SessionOptionDescriptor[] = [
     {

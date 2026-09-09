@@ -106,7 +106,7 @@ describe('buildNativeChatSessionOptionSnapshot', () => {
     )
   })
 
-  it('is empty when the model list is empty', () => {
+  it('is empty when the model list is empty and no model resolves', () => {
     expect(
       buildNativeChatSessionOptionSnapshot({
         catalog: CLAUDE_SESSION_OPTION_CATALOG,
@@ -117,6 +117,31 @@ describe('buildNativeChatSessionOptionSnapshot', () => {
         liveTransport: 'catalog'
       })
     ).toEqual([])
+  })
+
+  it('names a running model an empty list cannot offer, and keeps its effort row', () => {
+    // A provider that lists nothing has said nothing about what this account may pick,
+    // so there is nothing to offer — but the thread demonstrably runs a model, and
+    // blanking both pills over an empty list hides a fact we hold.
+    const record = createNativeChatSessionOptionRecord('codex')
+    record.model = { value: 'gpt-5.9-secret', source: 'reported' }
+
+    const snapshot = buildNativeChatSessionOptionSnapshot({
+      catalog: CODEX_SESSION_OPTION_CATALOG,
+      models: [],
+      record,
+      mode: 'live',
+      modelLabel: 'Model',
+      liveTransport: 'agent-session'
+    })
+
+    expect(snapshot.map((descriptor) => descriptor.id)).toEqual(['model', 'effort'])
+    expect(snapshot[0]!.kind).toEqual({
+      type: 'select',
+      currentValue: 'gpt-5.9-secret',
+      choices: []
+    })
+    expect(snapshot[0]!.valueSource).toBe('reported')
   })
 
   describe('sortNativeChatSessionOptions', () => {
