@@ -1,9 +1,8 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { forwardRef } from 'react'
-import { afterEach, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { NativeChatStructuredSession } from './NativeChatStructuredSession'
-import { expect } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   epoch: 'epoch-1',
