@@ -11,6 +11,7 @@
  * longer live is proven gone. Anything else is retained rather than settled.
  */
 
+import type { StructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-host'
 import { getStructuredAgentSessionHost } from '../native-chat/agent-session-wire/structured-agent-session-registry'
 import type { OrcaRuntimeService } from './orca-runtime'
 import { retireSettledStructuredWorkerTab } from './structured-agent-session-tab-retirement'
@@ -50,6 +51,10 @@ export async function closeStructuredAgentSessionChild(
       reason: 'The structured agent-session host is not installed; no session was closed.'
     }
   }
+  // Read BEFORE the hide, so a rollback puts the tab back exactly as it was. Restoring
+  // unconditionally would publish a tab for a session that was already hidden — a worker started
+  // without a chat tab, or one the user had closed — which is a new side effect, not an undo.
+  const tabWasVisible = readPersistedTabVisibility(host, sessionId)
   // Set only once the close is actually issued: `setSessionTabVisibility` throwing first leaves a
   // running child, and a receipt that still said `closed_agent_terminal` for it would be the
   // close-that-never-happened this flag exists to rule out.
@@ -59,6 +64,11 @@ export async function closeStructuredAgentSessionChild(
     closeAttempted = true
     await host.close(sessionId)
   } catch (error) {
+    // Only `closeAttempted` proves the hide landed: the store transaction restores its own state on
+    // failure, so a `setSessionTabVisibility` that threw hid nothing and has nothing to undo.
+    if (closeAttempted) {
+      await restorePersistedTabVisibility(host, sessionId, tabWasVisible)
+    }
     return {
       stopped: false,
       closeAttempted,
@@ -68,6 +78,7 @@ export async function closeStructuredAgentSessionChild(
   options.afterClose?.()
   const observation = observeStructuredWorker({ sessionId })
   if (observation.status !== 'exited') {
+    await restorePersistedTabVisibility(host, sessionId, tabWasVisible)
     return {
       stopped: false,
       closeAttempted: true,
@@ -78,4 +89,48 @@ export async function closeStructuredAgentSessionChild(
   // the live snapshot, which `setSessionTabVisibility(false)` above does not do.
   retireSettledStructuredWorkerTab(sessionId, options.runtime)
   return { stopped: true, closeAttempted: true }
+}
+
+function readPersistedTabVisibility(host: StructuredAgentSessionHost, sessionId: string): boolean {
+  try {
+    return host.getPersistedVisibleSessionTabIndex?.().sessionIds.includes(sessionId) ?? false
+  } catch {
+    // Unreadable index: claim nothing. A rollback that cannot prove the tab was visible must not
+    // publish one, for the same reason the read exists at all.
+    return false
+  }
+}
+
+/**
+ * Puts the chat tab back after a close that did not settle.
+ *
+ * The hide is the one visible side effect this function performs before the destructive step, so a
+ * failed close that kept it left the user's chat tab gone from the durable restore index — the
+ * conversation survived under `userData`, but nothing brought the tab back at the next launch.
+ *
+ * Re-observed first rather than restored outright: a close can throw PAST its own proof and still
+ * have taken the child with it, and `closeStructuredSessionsForWorktree` reads exactly that,
+ * counting such a session closed and retiring its tab. Republishing there would resurrect a tab for
+ * a session that is demonstrably gone, at the next launch, pointing at a deleted workspace.
+ *
+ * Never throws: the caller's `reason` is what the user is asked to act on, and a rollback failure
+ * must not replace it. `agent_session_identity_required` is the expected one — the record can be
+ * gone by now, which is itself the exit this restore is declining to undo.
+ */
+async function restorePersistedTabVisibility(
+  host: StructuredAgentSessionHost,
+  sessionId: string,
+  tabWasVisible: boolean
+): Promise<void> {
+  if (!tabWasVisible || observeStructuredWorker({ sessionId }).status === 'exited') {
+    return
+  }
+  try {
+    await host.setSessionTabVisibility?.(sessionId, true)
+  } catch (error) {
+    console.warn(
+      `[structured-session-close] could not restore the chat tab for ${sessionId} after a failed close`,
+      error
+    )
+  }
 }
