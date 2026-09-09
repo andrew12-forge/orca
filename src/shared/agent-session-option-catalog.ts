@@ -54,6 +54,21 @@ export function findCatalogOption(
   return model?.options.find((option) => option.id === optionId)
 }
 
+/** The options an id draws: the listed model's own, or the catalog's launch-safe set for
+ *  an id no list carries. Mirrors `resolveAgentSessionOptionLaunch`, so the picker offers
+ *  exactly the options a launch of that id would resolve — including for a model that is
+ *  running but absent from the choices, which the snapshot deliberately does not invent. */
+export function resolveCatalogModelOptions(
+  catalog: AgentSessionOptionCatalog,
+  models: readonly CatalogModel[],
+  modelId: string | null
+): readonly CatalogOption[] {
+  if (!modelId) {
+    return []
+  }
+  return models.find((model) => model.id === modelId)?.options ?? catalog.unknownModelOptions ?? []
+}
+
 /** Merge live rows over the static seed while retaining cataloged option mappings. */
 export function mergeCatalogModels(
   seed: readonly CatalogModel[],

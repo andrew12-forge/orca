@@ -2,9 +2,8 @@ import type { AgentSessionConversationCommand } from '../../../src/shared/agent-
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   getAgentSessionOptionCatalog,
-  type AgentSessionOptionCatalog,
-  type CatalogCommandDelivery,
-  type CatalogModel
+  resolveCatalogModelOptions,
+  type CatalogCommandDelivery
 } from '../../../src/shared/agent-session-option-catalog'
 import type {
   SessionOptionDescriptor,
@@ -15,10 +14,7 @@ import {
   buildNativeChatSessionOptionCommand,
   recordNativeChatSessionOptionCommand
 } from '../../../src/shared/native-chat-session-option-commands'
-import {
-  buildNativeChatSessionOptionSnapshot,
-  withTrackedNativeChatModel
-} from '../../../src/shared/native-chat-session-option-snapshot'
+import { buildNativeChatSessionOptionSnapshot } from '../../../src/shared/native-chat-session-option-snapshot'
 import {
   applyNativeChatReportedSessionOptions,
   clearNativeChatSessionModel,
@@ -83,15 +79,6 @@ export function clearMobileSessionOptionRecordsForTests(): void {
 }
 
 const EMPTY_SNAPSHOT: SessionOptionDescriptor[] = []
-
-/** The model list every consumer must see: the catalog's, plus the tracked model
- *  when the catalog no longer lists it. Desktop reconciles identically. */
-function activeModels(
-  catalog: AgentSessionOptionCatalog,
-  record: NativeChatSessionOptionRecord
-): CatalogModel[] {
-  return withTrackedNativeChatModel(catalog, catalog.models, record)
-}
 
 export function useMobileNativeChatSessionOptions(args: {
   agent: string | null
@@ -166,9 +153,9 @@ export function useMobileNativeChatSessionOptions(args: {
     const record = getScopedRecord(scopeKey, agent)
     return buildNativeChatSessionOptionSnapshot({
       catalog,
-      // The snapshot no longer self-heals an unlisted tracked model; every caller
-      // reconciles it in, so a value the seed dropped keeps its row and options.
-      models: activeModels(catalog, record),
+      // The seed is the whole list here: mobile runs no model probe, so there is
+      // nothing for desktop's `withTrackedNativeChatModel` to reconcile back in.
+      models: catalog.models,
       record,
       mode: 'live',
       modelLabel: 'Model',
@@ -222,9 +209,9 @@ export function useMobileNativeChatSessionOptions(args: {
         const apply =
           id === 'model'
             ? catalog.modelApply
-            : activeModels(catalog, record)
-                .find((model) => model.id === previousModelId)
-                ?.options.find((option) => option.id === id)?.apply
+            : resolveCatalogModelOptions(catalog, catalog.models, previousModelId).find(
+                (option) => option.id === id
+              )?.apply
         if (!apply || apply.midSession?.kind === 'agent-picker') {
           return false
         }
@@ -246,7 +233,7 @@ export function useMobileNativeChatSessionOptions(args: {
           apply,
           modelId: previousModelId,
           catalog,
-          models: activeModels(catalog, record),
+          models: catalog.models,
           record
         })
         if (!command) {
@@ -300,9 +287,9 @@ export function useMobileNativeChatSessionOptions(args: {
         const apply =
           id === 'model'
             ? catalog.modelApply
-            : activeModels(catalog, record)
-                .find((model) => model.id === modelId)
-                ?.options.find((option) => option.id === id)?.apply
+            : resolveCatalogModelOptions(catalog, catalog.models, modelId).find(
+                (option) => option.id === id
+              )?.apply
         const midSession = apply?.midSession
         if (midSession?.kind === 'agent-picker') {
           const outcome = midSession.delivery
@@ -334,7 +321,7 @@ export function useMobileNativeChatSessionOptions(args: {
       const record = getScopedRecord(scopeKey, agent)
       const result = recordNativeChatSessionOptionCommand({
         catalog,
-        models: activeModels(catalog, record),
+        models: catalog.models,
         record,
         command
       })
