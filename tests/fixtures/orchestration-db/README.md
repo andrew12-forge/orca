@@ -13,7 +13,7 @@ cares about. These fixtures were produced by running **each tag's own `Orchestra
 column a migration forgets is genuinely absent and the open fails.
 
 Proof that this is not redundant: adding a column to `create-core-tables-sql.ts` with no migration
-turns all four fixture cases red and leaves the other 917 tests under
+turns all four fixture cases red and leaves the other 908 passing tests under
 `src/main/runtime/orchestration` — including the all-start-versions test — green.
 
 ## The fixtures are immutable
