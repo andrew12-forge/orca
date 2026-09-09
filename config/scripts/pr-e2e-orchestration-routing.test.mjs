@@ -246,4 +246,49 @@ describe('orchestration PR E2E routing', () => {
     }
     expect(e2eWorkflow.jobs['changed-e2e'].if).toBe("inputs.test_files != ''")
   })
+
+  it('gives each caller of e2e.yml its own artifact namespace', () => {
+    // Why: pr.yml now calls e2e.yml twice in one run. upload-artifact fails outright when two
+    // jobs in a run upload one name, so without distinct suffixes a PR touching orchestration
+    // source AND another routed source kills whichever `build` uploads e2e-build-out second --
+    // taking a required check red for a reason that has nothing to do with the PR.
+    const callers = Object.entries(prWorkflow.jobs).filter(
+      ([, job]) => job.uses === './.github/workflows/e2e.yml'
+    )
+    expect(callers.length).toBeGreaterThan(1)
+    const suffixes = callers.map(([, job]) => String(job.with?.artifact_suffix ?? ''))
+    expect(new Set(suffixes).size, `duplicate artifact_suffix among ${suffixes.join(', ')}`).toBe(
+      callers.length
+    )
+    expect(prWorkflow.jobs.orchestration_e2e.with.artifact_suffix).toBe('-orchestration')
+    // The advisory caller keeps the empty default so schedule and dispatch runs, which pass no
+    // inputs at all, land on the same artifact names they always have.
+    expect(prWorkflow.jobs.e2e.with.artifact_suffix).toBeUndefined()
+    expect(e2eWorkflow.on.workflow_call.inputs.artifact_suffix).toMatchObject({
+      required: false,
+      default: '',
+      type: 'string'
+    })
+  })
+
+  it('suffixes every artifact e2e.yml uploads or downloads', () => {
+    // Why every one, not just e2e-build-out: a trace upload that kept a bare name would fail the
+    // job only when a spec fails in both lanes -- a red that appears exactly when the suite is
+    // already telling you something, and hides it.
+    const artifactSteps = Object.values(e2eWorkflow.jobs)
+      .flatMap((job) => job.steps ?? [])
+      .filter((step) => /^actions\/(?:upload|download)-artifact@/.test(step.uses ?? ''))
+    expect(artifactSteps.length).toBeGreaterThan(0)
+    for (const step of artifactSteps) {
+      expect(step.with?.name, JSON.stringify(step.with)).toMatch(
+        /\$\{\{ inputs\.artifact_suffix \}\}$/
+      )
+    }
+    // A concurrency group would serialize or cancel one call against the other; e2e.yml has none
+    // and must not grow one without keying it the same way.
+    expect(e2eWorkflow.concurrency).toBeUndefined()
+    for (const job of Object.values(e2eWorkflow.jobs)) {
+      expect(job.concurrency).toBeUndefined()
+    }
+  })
 })
