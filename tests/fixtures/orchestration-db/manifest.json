@@ -1,0 +1,251 @@
+{
+  "fixtures": [
+    {
+      "tag": "v1.4.180",
+      "commit": "0b62333cf179adbd839843456e111e2cdaf0bffd",
+      "userVersion": 25,
+      "populateShape": {
+        "dispatchArguments": "positional",
+        "attachmentCarriesRunId": false
+      },
+      "sha256": "84f508fcd93884f8c662fbb427ec3879962de112b7cba755cb775a850dfbcb62",
+      "expected": {
+        "runIds": ["run_952ee0cdb597"],
+        "taskIds": ["task_258f45c09d0e"],
+        "dispatchIds": ["ctx_32dbfa52ecbb"],
+        "messages": [
+          {
+            "id": "msg_fixture_direct",
+            "to": "terminal-delta",
+            "read": 0,
+            "run_id": "run_legacy_local"
+          },
+          {
+            "id": "msg_fixture_run_mailbox",
+            "to": "run:run_952ee0cdb597",
+            "read": 0,
+            "run_id": "run_952ee0cdb597"
+          }
+        ],
+        "legacyAdoptionsCount": 0,
+        "attachments": [
+          {
+            "dispatchId": "ctx_federated_fixture",
+            "taskId": "task_federated_fixture"
+          }
+        ],
+        "tableRowCounts": {
+          "coordinator_runs": 0,
+          "decision_gates": 0,
+          "deliveries": 0,
+          "dispatch_contexts": 1,
+          "federated_dispatches": 0,
+          "federation_relay_items": 0,
+          "legacy_adoptions": 0,
+          "legacy_compatibility_principals": 0,
+          "legacy_mail_receipts": 0,
+          "legacy_operation_receipts": 0,
+          "messages": 2,
+          "mutation_receipts": 1,
+          "question_threads": 0,
+          "remote_dispatch_attachments": 1,
+          "remote_questions": 0,
+          "runs": 2,
+          "sqlite_sequence": 1,
+          "tasks": 1,
+          "worker_dispatches": 0,
+          "worker_terminal_archives": 0,
+          "worker_terminal_resources": 0
+        }
+      }
+    },
+    {
+      "tag": "v1.4.190",
+      "commit": "6e4f817101daa18d82824b69243d9079baa9c416",
+      "userVersion": 29,
+      "populateShape": {
+        "dispatchArguments": "positional",
+        "attachmentCarriesRunId": false
+      },
+      "sha256": "3612ba707ca1f6b716640012c151181fd31ca2a07259b1b564a3f198e02eaad3",
+      "expected": {
+        "runIds": ["run_77652b71a647"],
+        "taskIds": ["task_5ba4f3ac1550"],
+        "dispatchIds": ["ctx_5447ff220a1b"],
+        "messages": [
+          {
+            "id": "msg_fixture_direct",
+            "to": "terminal-delta",
+            "read": 0,
+            "run_id": "run_legacy_local"
+          },
+          {
+            "id": "msg_fixture_run_mailbox",
+            "to": "run:run_77652b71a647",
+            "read": 0,
+            "run_id": "run_77652b71a647"
+          }
+        ],
+        "legacyAdoptionsCount": 0,
+        "attachments": [
+          {
+            "dispatchId": "ctx_federated_fixture",
+            "taskId": "task_federated_fixture"
+          }
+        ],
+        "tableRowCounts": {
+          "coordinator_runs": 0,
+          "decision_gates": 0,
+          "deliveries": 0,
+          "dispatch_contexts": 1,
+          "federated_dispatches": 0,
+          "federation_relay_items": 0,
+          "legacy_adoptions": 0,
+          "legacy_compatibility_principals": 0,
+          "legacy_mail_receipts": 0,
+          "legacy_operation_receipts": 0,
+          "messages": 2,
+          "mutation_caller_identities": 0,
+          "mutation_receipt_ledger": 1,
+          "mutation_receipts": 1,
+          "question_threads": 0,
+          "remote_dispatch_attachments": 1,
+          "remote_questions": 0,
+          "run_coordinator_handles": 1,
+          "runs": 2,
+          "sqlite_sequence": 1,
+          "tasks": 1,
+          "worker_dispatches": 0,
+          "worker_terminal_archives": 0,
+          "worker_terminal_resources": 0
+        }
+      }
+    },
+    {
+      "tag": "v1.4.198",
+      "commit": "a2b1751aa2c8d9f2badd132584d00b67580c23df",
+      "userVersion": 30,
+      "populateShape": {
+        "dispatchArguments": "params",
+        "attachmentCarriesRunId": false
+      },
+      "sha256": "3fc51b93dd7e29289eca549966bbd936f881c5d201c6baefb2e9a9ca305acc29",
+      "expected": {
+        "runIds": ["run_eeff920266b1"],
+        "taskIds": ["task_1b7255424126"],
+        "dispatchIds": ["ctx_4e1b3fd2ed11"],
+        "messages": [
+          {
+            "id": "msg_fixture_direct",
+            "to": "terminal-delta",
+            "read": 0,
+            "run_id": "run_legacy_local"
+          },
+          {
+            "id": "msg_fixture_run_mailbox",
+            "to": "run:run_eeff920266b1",
+            "read": 0,
+            "run_id": "run_eeff920266b1"
+          }
+        ],
+        "legacyAdoptionsCount": 0,
+        "attachments": [
+          {
+            "dispatchId": "ctx_federated_fixture",
+            "taskId": "task_federated_fixture"
+          }
+        ],
+        "tableRowCounts": {
+          "coordinator_runs": 0,
+          "decision_gates": 0,
+          "deliveries": 0,
+          "dispatch_contexts": 1,
+          "federated_dispatches": 0,
+          "federation_relay_items": 0,
+          "legacy_adoptions": 0,
+          "legacy_compatibility_principals": 0,
+          "legacy_mail_receipts": 0,
+          "legacy_operation_receipts": 0,
+          "messages": 2,
+          "mutation_caller_identities": 0,
+          "mutation_receipt_ledger": 1,
+          "mutation_receipts": 1,
+          "question_threads": 0,
+          "remote_dispatch_attachments": 1,
+          "remote_questions": 0,
+          "run_coordinator_handles": 1,
+          "runs": 2,
+          "sqlite_sequence": 1,
+          "tasks": 1,
+          "worker_dispatches": 0,
+          "worker_terminal_archives": 0,
+          "worker_terminal_resources": 0
+        }
+      }
+    },
+    {
+      "tag": "v1.4.199",
+      "commit": "28957d6004dd191b6f0baff493a9fd3d37405d9d",
+      "userVersion": 40,
+      "populateShape": {
+        "dispatchArguments": "params",
+        "attachmentCarriesRunId": true
+      },
+      "sha256": "86b36ce57e1281261ff3d935a330138d15f377fe5d16da914f00decac54845f7",
+      "expected": {
+        "runIds": ["run_fc568a9254f9"],
+        "taskIds": ["task_049adfe8bec2"],
+        "dispatchIds": ["ctx_8752a4df110a"],
+        "messages": [
+          {
+            "id": "msg_fixture_direct",
+            "to": "terminal-delta",
+            "read": 0,
+            "run_id": "run_unbound"
+          },
+          {
+            "id": "msg_fixture_run_mailbox",
+            "to": "run:run_fc568a9254f9",
+            "read": 0,
+            "run_id": "run_fc568a9254f9"
+          }
+        ],
+        "legacyAdoptionsCount": 0,
+        "attachments": [
+          {
+            "dispatchId": "ctx_federated_fixture",
+            "taskId": "task_federated_fixture"
+          }
+        ],
+        "tableRowCounts": {
+          "attempt_observation_facts": 0,
+          "coordinator_runs": 0,
+          "decision_gates": 0,
+          "deliveries": 0,
+          "dispatch_contexts": 1,
+          "federated_dispatches": 0,
+          "federation_relay_items": 0,
+          "legacy_adoptions": 0,
+          "legacy_compatibility_principals": 0,
+          "legacy_mail_receipts": 0,
+          "legacy_operation_receipts": 0,
+          "messages": 2,
+          "mutation_caller_identities": 0,
+          "mutation_receipt_ledger": 1,
+          "mutation_receipts": 1,
+          "question_threads": 0,
+          "remote_dispatch_attachments": 1,
+          "remote_questions": 0,
+          "run_coordinator_handles": 1,
+          "runs": 3,
+          "sqlite_sequence": 1,
+          "structured_pointer_operations": 0,
+          "tasks": 1,
+          "worker_dispatches": 0,
+          "worker_terminal_archives": 0,
+          "worker_terminal_resources": 0
+        }
+      }
+    }
+  ]
+}
