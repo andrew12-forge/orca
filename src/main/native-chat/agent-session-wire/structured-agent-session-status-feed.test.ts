@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentSessionRecord } from '../../../shared/agent-session-record'
-import type { AgentSessionStatusEvent } from '../../../shared/agent-session-wire'
+import type {
+  AgentSessionBackgroundTask,
+  AgentSessionStatusEvent
+} from '../../../shared/agent-session-wire'
 import { createClaudeJournalTranslator } from '../../claude/claude-structured-journal-translation'
 import { publishCodexTurnLifecycle } from '../../codex/codex-structured-journal-translation-turns'
 import { createDeferredStructuredAgentSessionEventSink } from './structured-agent-session-event-sink'
@@ -582,19 +585,20 @@ describe('StructuredAgentSessionStatusFeed', () => {
       { fence: 1 }
     )
     const snapshot = vi.spyOn(journal, 'snapshot')
-    let totalTokens = 0
+    let taskState: 'working' | 'waiting' = 'working'
     const { feed, events } = feedFor(new Map([[SESSION, { journal }]]), null, undefined, () => ({
       state: 'monitoring',
-      tasks: [{ id: 'child', kind: 'agent', totalTokens }]
+      tasks: [{ id: 'child', kind: 'agent', state: taskState }]
     }))
-    for (totalTokens = 1; totalTokens <= 100; totalTokens++) {
+    for (let tick = 1; tick <= 100; tick++) {
+      taskState = tick % 2 === 1 ? 'waiting' : 'working'
       feed.publish(SESSION)
     }
     expect(events).toHaveLength(101)
     expect(snapshot).toHaveBeenCalledTimes(1)
     expect(events.at(-1)).toMatchObject({
       type: 'status',
-      session: { status: 'working', backgroundTasks: [{ totalTokens: 100 }] }
+      session: { status: 'working', backgroundTasks: [{ state: 'working' }] }
     })
     await journal.appendTombstone(TURN_IDENTITY, { fence: 1 })
     feed.publish(SESSION)
@@ -662,6 +666,51 @@ describe('StructuredAgentSessionStatusFeed', () => {
     // An identical projection is suppressed.
     feed.publish(SESSION, journal)
     expect(events).toHaveLength(before + 1)
+  })
+
+  it('omits task usage so a progress tick never re-broadcasts the summary', async () => {
+    const journal = await openJournal()
+    let tasks: AgentSessionBackgroundTask[] = [
+      { id: 'task-1', kind: 'agent', name: 'deep_review', state: 'working', totalTokens: 10 }
+    ]
+    const { feed, events } = feedFor(new Map([[SESSION, { journal }]]), null, undefined, () => ({
+      state: 'monitoring',
+      tasks
+    }))
+    await journal.appendItem(
+      USER_IDENTITY,
+      { kind: 'message', role: 'user', blocks: [{ type: 'text', text: 'fan out' }] },
+      { fence: 1 }
+    )
+    feed.publish(SESSION, journal)
+    const before = events.length
+
+    // A `task_progress` frame moves only usage, which no status-summary reader renders;
+    // re-broadcasting the whole summary per frame would cost every remote subscriber.
+    tasks = [
+      { id: 'task-1', kind: 'agent', name: 'deep_review', state: 'working', totalTokens: 4_200 }
+    ]
+    feed.publish(SESSION, journal)
+    expect(events).toHaveLength(before)
+    expect(events.at(-1)).toEqual({
+      type: 'status',
+      session: expect.objectContaining({
+        backgroundTasks: [{ id: 'task-1', kind: 'agent', name: 'deep_review', state: 'working' }]
+      })
+    })
+
+    // A state change on the same task still reaches subscribers.
+    tasks = [
+      { id: 'task-1', kind: 'agent', name: 'deep_review', state: 'waiting', totalTokens: 4_200 }
+    ]
+    feed.publish(SESSION, journal)
+    expect(events).toHaveLength(before + 1)
+    expect(events.at(-1)).toEqual({
+      type: 'status',
+      session: expect.objectContaining({
+        backgroundTasks: [expect.objectContaining({ state: 'waiting' })]
+      })
+    })
   })
 })
 
