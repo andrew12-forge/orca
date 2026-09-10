@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import type { AgentSessionBackgroundTask } from '../../../../shared/agent-session-wire'
 import { backgroundTasksHeaderContent } from './background-task-header-content'
 import {
-  backgroundTasksDotState,
   buildBackgroundTaskGroups,
   formatBackgroundTaskTokens,
   resolveBackgroundTaskName
@@ -133,31 +132,6 @@ describe('backgroundTasksHeaderContent', () => {
   })
 })
 
-describe('backgroundTasksDotState', () => {
-  const groups = (tasks: AgentSessionBackgroundTask[]) => buildBackgroundTaskGroups(tasks, [])
-
-  it('lets lost contact outrank running work', () => {
-    expect(
-      backgroundTasksDotState(groups([agent('a'), agent('b', { state: 'unverifiable' })]))
-    ).toBe('unverifiable')
-  })
-
-  it('keeps the aggregate monitoring identity for mixed kinds', () => {
-    expect(
-      backgroundTasksDotState(
-        groups([agent('a'), { id: 's', kind: 'command', state: 'working', startedAt: NOW }])
-      )
-    ).toBe('monitoring')
-  })
-
-  it('reports the liveliest state for a single kind', () => {
-    expect(backgroundTasksDotState(groups([agent('a'), agent('b', { state: 'waiting' })]))).toBe(
-      'working'
-    )
-    expect(backgroundTasksDotState(groups([agent('a', { state: 'waiting' })]))).toBe('waiting')
-  })
-})
-
 describe('buildBackgroundTaskGroups', () => {
   it('groups by kind in fixed order, keeping first-seen order inside a group', () => {
     const built = buildBackgroundTaskGroups(
@@ -188,6 +162,9 @@ describe('formatBackgroundTaskTokens', () => {
     expect(formatBackgroundTaskTokens(4_100)).toBe('4.1k')
     expect(formatBackgroundTaskTokens(2_000)).toBe('2k')
     expect(formatBackgroundTaskTokens(1_450_000)).toBe('1.5m')
+    // Rounding first would promote this to "1000k".
+    expect(formatBackgroundTaskTokens(999_950)).toBe('1m')
+    expect(formatBackgroundTaskTokens(999_949)).toBe('999.9k')
   })
 })
 

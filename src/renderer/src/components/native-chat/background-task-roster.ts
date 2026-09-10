@@ -138,16 +138,21 @@ export function backgroundTaskStateReason(state: RunState): string | null {
   }
 }
 
+function tokenScaleText(value: number): string {
+  return Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)
+}
+
 /** Compact token meta per the mock ("18.2k"). Locale-neutral on purpose:
  *  it sits in a mono meta slot beside elapsed, like other technical literals. */
 export function formatBackgroundTaskTokens(totalTokens: number): string {
   if (totalTokens < 1_000) {
     return String(totalTokens)
   }
-  const scaled = totalTokens < 1_000_000 ? totalTokens / 1_000 : totalTokens / 1_000_000
-  const unit = totalTokens < 1_000_000 ? 'k' : 'm'
-  const rounded = Math.round(scaled * 10) / 10
-  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}${unit}`
+  // Round before picking the unit, or 999_950 renders as "1000k" instead of "1m".
+  const thousands = Math.round(totalTokens / 100) / 10
+  return thousands < 1_000
+    ? `${tokenScaleText(thousands)}k`
+    : `${tokenScaleText(Math.round(totalTokens / 100_000) / 10)}m`
 }
 
 export function backgroundTaskElapsedLabel(
@@ -158,24 +163,6 @@ export function backgroundTaskElapsedLabel(
     return null
   }
   return formatNativeChatDuration((now - task.startedAt) / 1000)
-}
-
-/** Header dot: lost contact outranks running work; a mixed-kind strip keeps
- *  the aggregate monitoring identity; a single kind reports its liveliest state. */
-export function backgroundTasksDotState(groups: readonly BackgroundTaskGroup[]): RunState {
-  const states = groups.flatMap((group) => group.tasks.map((entry) => entry.state))
-  if (states.some((state) => state === 'unverifiable')) {
-    return 'unverifiable'
-  }
-  if (groups.length !== 1) {
-    return 'monitoring'
-  }
-  for (const state of ['working', 'waiting', 'blocked', 'monitoring', 'idle'] as const) {
-    if (states.includes(state)) {
-      return state
-    }
-  }
-  return 'done'
 }
 
 export function backgroundTaskGroupLabel(kind: TaskKind): string {
