@@ -72,7 +72,8 @@ Alternatively, register a language directly:
 
 `scopeName` is read from the grammar. An optional `scopeName` in a direct
 registration checks that the file declares the expected scope. `configuration`
-is optional. Supported configuration fields are comments, brackets, auto-closing
+is optional. Missing or invalid configuration produces a diagnostic while the language
+continues to highlight without those editor settings. Supported configuration fields are comments, brackets, auto-closing
 pairs, and surrounding pairs; VS Code tuple pairs and JSONC are accepted.
 
 Paths can be absolute, home-relative (`~/`), or relative to `languages.json`.
@@ -96,7 +97,9 @@ must stay within that directory, including through symlinks.
 - Invalid entries produce diagnostics while valid neighboring entries continue
   to load. Missing dependency scopes or invalid grammar expressions produce an
   error notification when that language is opened, with a plain-text fallback.
-  Diagnostics are also logged with the `[custom-languages]` prefix.
+  Missing language-to-grammar mappings also produce diagnostics. Notifications reuse
+  one toast to avoid stacking startup errors; all diagnostics are logged with the
+  `[custom-languages]` prefix.
 - Only JSON TextMate grammars are supported. Each file is limited to 5 MiB and
   loaded grammars to 16 MiB total. Duplicate scopes are rejected; the first
   definition is retained.

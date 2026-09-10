@@ -82,11 +82,14 @@ export async function readCustomLanguages(
     if (!grammars.has(scopeName)) {
       throw new Error(`Missing grammar ${scopeName}`)
     }
-    const configuration = configurationPath
-      ? languageConfigurationSchema.parse(
+    let configuration: z.infer<typeof languageConfigurationSchema> | undefined
+    if (configurationPath) {
+      await attempt(`${metadata.id} configuration`, async () => {
+        configuration = languageConfigurationSchema.parse(
           await readLanguageJson(await resolveResource(configurationPath))
         )
-      : undefined
+      })
+    }
     snapshot.languages.push({ ...metadata, scopeName, configuration })
     languageIds.add(metadata.id)
   }
@@ -122,9 +125,10 @@ export async function readCustomLanguages(
           await attempt(`${extensionPath} language`, async () => {
             const metadata = languageMetadataSchema.parse(raw)
             const scopeName = languageScopes.get(metadata.id)
-            if (scopeName) {
-              await addLanguage(raw, scopeName, (path) => extensionResourcePath(root, path))
+            if (!scopeName) {
+              throw new Error(`No TextMate grammar associated with language ${metadata.id}`)
             }
+            await addLanguage(raw, scopeName, (path) => extensionResourcePath(root, path))
           })
         }
       })

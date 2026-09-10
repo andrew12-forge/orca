@@ -88,40 +88,87 @@ describe('readCustomLanguages', () => {
     expect(result.diagnostics).toHaveLength(1)
   })
 
-  it('releases the scope and byte budget when direct configuration fails', async () => {
+  it('releases the scope and byte budget when direct registration is rejected', async () => {
     await json('retry.json', { ...grammar('source.retry'), padding: ' '.repeat(4 * 1024 * 1024) })
-    await writeFile(join(dir, 'invalid-config.json'), '{ invalid')
+    await extension()
     await json('languages.json', {
+      extensions: ['./extension'],
       languages: [
         ...Array.from({ length: 4 }, () => ({
-          id: 'retry',
-          grammar: './retry.json',
-          configuration: './invalid-config.json'
+          id: 'ExampleLang',
+          grammar: './retry.json'
         })),
         { id: 'retry', grammar: './retry.json', extensions: ['.retry'] }
       ]
     })
     const result = await readCustomLanguages(join(dir, 'languages.json'))
     expect(result.diagnostics).toHaveLength(4)
-    expect(result.diagnostics.every((message) => message.includes('Invalid JSON'))).toBe(true)
-    expect(result.languages.map((language) => language.id)).toEqual(['retry'])
-    expect(Object.keys(result.grammars)).toEqual(['source.retry'])
-  })
-
-  it('releases a rejected duplicate language grammar without changing the existing language', async () => {
-    await extension()
-    await json('retry.json', grammar('source.retry'))
-    await json('languages.json', {
-      extensions: ['./extension'],
-      languages: [
-        { id: 'ExampleLang', grammar: './retry.json' },
-        { id: 'retry', grammar: './retry.json', extensions: ['.retry'] }
-      ]
-    })
-    const result = await readCustomLanguages(join(dir, 'languages.json'))
-    expect(result.diagnostics).toEqual(['Custom language: Duplicate language id ExampleLang'])
+    expect(
+      result.diagnostics.every((message) => message.includes('Duplicate language id ExampleLang'))
+    ).toBe(true)
     expect(result.languages.map((language) => language.id)).toEqual(['ExampleLang', 'retry'])
     expect(Object.keys(result.grammars)).toEqual(['source.examplelang', 'source.retry'])
+  })
+
+  describe.each(['extension', 'direct'])('%s optional configuration', (source) => {
+    it.each(['missing', 'malformed JSON', 'invalid schema'])(
+      'preserves highlighting when configuration has %s',
+      async (failure) => {
+        await extension()
+        if (failure === 'missing') {
+          await rm(join(dir, 'extension/configuration.json'))
+        } else if (failure === 'malformed JSON') {
+          await writeFile(join(dir, 'extension/configuration.json'), '{ invalid')
+        } else {
+          await json('extension/configuration.json', { brackets: 42 })
+        }
+        await json(
+          'languages.json',
+          source === 'extension'
+            ? { extensions: ['./extension'] }
+            : {
+                languages: [
+                  {
+                    id: 'ExampleLang',
+                    extensions: ['.examplelang'],
+                    grammar: './extension/examplelang.json',
+                    configuration: './extension/configuration.json'
+                  }
+                ]
+              }
+        )
+        const result = await readCustomLanguages(join(dir, 'languages.json'))
+        expect(result.diagnostics).toHaveLength(1)
+        expect(result.diagnostics[0]).toContain('ExampleLang configuration:')
+        expect(result.languages).toEqual([
+          {
+            id: 'ExampleLang',
+            extensions: ['.examplelang'],
+            scopeName: 'source.examplelang',
+            configuration: undefined
+          }
+        ])
+        expect(Object.keys(result.grammars)).toEqual(['source.examplelang'])
+      }
+    )
+  })
+
+  it('reports extension languages without associated grammars', async () => {
+    await mkdir(join(dir, 'extension'))
+    await json('extension/dependency.json', grammar('source.dependency'))
+    await json('extension/package.json', {
+      contributes: {
+        languages: [{ id: 'ExampleLang', extensions: ['.examplelang'] }],
+        grammars: [{ scopeName: 'source.dependency', path: './dependency.json' }]
+      }
+    })
+    await json('languages.json', { extensions: ['./extension'] })
+    const result = await readCustomLanguages(join(dir, 'languages.json'))
+    expect(result.languages).toEqual([])
+    expect(Object.keys(result.grammars)).toEqual(['source.dependency'])
+    expect(result.diagnostics).toEqual([
+      './extension language: No TextMate grammar associated with language ExampleLang'
+    ])
   })
 
   it('rejects extension grammar paths outside the extension directory', async () => {

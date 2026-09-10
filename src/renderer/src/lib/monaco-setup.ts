@@ -85,7 +85,7 @@ registerJsonlLanguage(monaco)
 void loadCustomLanguageSnapshot().then((snapshot) => {
   registerCustomLanguages(monaco, snapshot, (message) => {
     console.warn('[custom-languages]', message)
-    toast.error(message)
+    toast.error(message, { id: 'custom-languages' })
   })
 })
 installMonacoDelayerCancellationGuard()
