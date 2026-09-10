@@ -191,31 +191,44 @@ export function useStructuredAgentSession(args: {
   )
 
   const prompts = pendingStructuredSessionPrompts(state.items)
-  const rewind = useNativeChatRewind({
-    sessionId,
-    hostBlockedReason: summary?.rewindBlockedReason,
-    state,
-    support:
-      conversationSupport?.sessionId === sessionId && conversationSupport.fence === state.fence
-        ? conversationSupport.rewind
-        : undefined,
-    supportResolved:
-      conversationSupport?.sessionId === sessionId && conversationSupport.fence === state.fence,
-    blocked: Boolean(
-      turnId ||
-      prompts.length ||
-      isMonitoringBackgroundTasks ||
-      outboxController.outbox.length ||
-      commandPending.current
-    ),
-    send: (fields) =>
-      mutate<AgentSessionRewindResult>(
-        'agentSession.rewind',
-        'agentSession.rewind',
-        fields,
-        undefined
-      )
-  })
+  const rewindSupportResolved =
+    conversationSupport?.sessionId === sessionId && conversationSupport.fence === state.fence
+  const rewindSupport = rewindSupportResolved ? conversationSupport.rewind : undefined
+  const rewindBlocked = Boolean(
+    turnId ||
+    prompts.length ||
+    isMonitoringBackgroundTasks ||
+    outboxController.outbox.length ||
+    commandPending.current
+  )
+  const rewindInput = useMemo<Parameters<typeof useNativeChatRewind>[0]>(
+    () => ({
+      sessionId,
+      hostBlockedReason: summary?.rewindBlockedReason,
+      state,
+      support: rewindSupport,
+      supportResolved: rewindSupportResolved,
+      blocked: rewindBlocked,
+      send: (fields, onFailure) =>
+        mutate<AgentSessionRewindResult>(
+          'agentSession.rewind',
+          'agentSession.rewind',
+          fields,
+          undefined,
+          onFailure
+        )
+    }),
+    [
+      sessionId,
+      summary?.rewindBlockedReason,
+      state,
+      rewindSupport,
+      rewindSupportResolved,
+      rewindBlocked,
+      mutate
+    ]
+  )
+  const rewind = useNativeChatRewind(rewindInput)
   const { outbox } = outboxController
   const messages = useStructuredAgentSessionMessages(state.items, outbox, state.submissions)
   return {

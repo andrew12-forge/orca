@@ -86,7 +86,9 @@ vi.mock('./use-structured-agent-session', async () => {
         isWorking: false,
         isMonitoringBackgroundTasks: mocks.monitoringBackgroundTasks,
         supportsBackgroundTaskStop: mocks.supportsBackgroundTaskStop,
-        supportsBackgroundTaskStopAll: mocks.supportsBackgroundTaskStopAll,
+        backgroundTasksView: {
+          supportsBackgroundTaskStopAll: mocks.supportsBackgroundTaskStopAll
+        },
         backgroundTasks: mocks.backgroundTasks,
         turnId: null,
         cancel: vi.fn(),
