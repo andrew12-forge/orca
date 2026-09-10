@@ -530,4 +530,31 @@ describe('NativeChatSessionOptionPickers', () => {
     expect(screen.getAllByText('Thinking').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Sent to the agent — not confirmed').length).toBeGreaterThan(0)
   })
+
+  // A running model with an empty `model/list` must not open onto a blank panel.
+  it('explains an empty choice list instead of rendering an empty menu', () => {
+    const { rerender } = render(
+      <NativeChatSessionOptionPickers
+        surface={surface}
+        snapshot={[
+          model({
+            kind: { type: 'select', currentValue: 'gpt-5.2-codex', choices: [] },
+            valueSource: 'reported'
+          })
+        ]}
+        isWorking={false}
+      />
+    )
+    expect(screen.getByText('No choices reported by the agent')).not.toBeNull()
+    // The pill still names the model that is running; only the list is empty.
+    expect(screen.getByRole('button', { name: 'Model gpt-5.2-codex' }).textContent).toContain(
+      'gpt-5.2-codex'
+    )
+
+    rerender(
+      <NativeChatSessionOptionPickers surface={surface} snapshot={[model()]} isWorking={false} />
+    )
+    expect(screen.queryByText('No choices reported by the agent')).toBeNull()
+    expect(screen.getByRole('radio', { name: 'Opus 4.8' })).not.toBeNull()
+  })
 })

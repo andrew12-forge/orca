@@ -219,6 +219,10 @@ export function DescriptorRows({
     )
   }
   const { currentValue, choices } = descriptor.kind
+  // Why: a running value with nothing listable behind it would render an empty card.
+  if (choices.length === 0) {
+    return <SessionOptionCaption>No choices reported by the agent</SessionOptionCaption>
+  }
   return (
     <>
       {choices.map((choice, index) => (

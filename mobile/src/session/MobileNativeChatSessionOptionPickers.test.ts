@@ -280,6 +280,33 @@ describe('MobileNativeChatSessionOptionPickers', () => {
     }
   )
 
+  // A running model with an empty `model/list` must not open onto a blank sheet.
+  it('captions an empty choice list instead of rendering an empty sheet', async () => {
+    const captionCount = (): number =>
+      renderer!.root
+        .findAll((node) => node.type === 'Text')
+        .filter(
+          (node) =>
+            (node.props as { children?: unknown }).children === 'No choices reported by the agent'
+        ).length
+
+    mount([
+      {
+        ...MODEL_DESCRIPTOR,
+        kind: { type: 'select', currentValue: 'gpt-5.2-codex', choices: [] }
+      },
+      EFFORT_DESCRIPTOR
+    ])
+    await act(async () => pill('Model').props.onPress())
+    expect(captionCount()).toBeGreaterThan(0)
+
+    renderer?.unmount()
+    mount([MODEL_DESCRIPTOR, EFFORT_DESCRIPTOR])
+    await act(async () => pill('Model').props.onPress())
+    expect(captionCount()).toBe(0)
+    expect(rowByText('Sonnet 5').props.accessibilityRole).toBe('radio')
+  })
+
   it('locks the pills while the agent is working', () => {
     mount([MODEL_DESCRIPTOR, EFFORT_DESCRIPTOR], true)
     expect(pill('Model').props).toMatchObject({ disabled: true })

@@ -170,6 +170,15 @@ function DescriptorMenuRows(props: {
       </>
     )
   }
+  // Why: the agent can report a running value with nothing listable behind it;
+  // an empty radio group renders as a blank panel that looks broken.
+  if (descriptor.kind.choices.length === 0) {
+    return (
+      <DropdownMenuLabel className="font-normal text-muted-foreground">
+        {translate('components.native-chat.composer.noChoices', 'No choices reported by the agent')}
+      </DropdownMenuLabel>
+    )
+  }
   return (
     <DropdownMenuRadioGroup
       value={descriptor.kind.currentValue}
