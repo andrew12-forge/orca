@@ -2610,9 +2610,6 @@
   },
   "components": {
     "native-chat": {
-      "backgroundTasks": {
-        "runningList": "Running background tasks"
-      },
       "composer": {
         "effort": "Effort"
       },
