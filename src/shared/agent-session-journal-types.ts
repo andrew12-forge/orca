@@ -202,6 +202,9 @@ export type AgentJournalSubmission = {
   reason: string | null
   submittedAt: number
   resolvedAt: number | null
+  /** Set when crash reconciliation resolved the dispatch, not the provider. A live
+   *  `unknown` is a send still outstanding; a recovered one outlived its writer. */
+  recovered?: true
 }
 
 /** Durable answer to "did my send land?", keyed by client message id. Only an

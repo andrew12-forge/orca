@@ -153,6 +153,36 @@ describe('StructuredAgentSessionStatusFeed', () => {
     ])
   })
 
+  it('publishes working from the pending submission, before the provider replays the turn', async () => {
+    const journal = await openJournal()
+    const { feed, events } = feedFor(new Map([[SESSION, { journal }]]))
+    events.length = 0
+    await journal.appendSubmission({
+      clientMessageId: 'client-1',
+      payloadFingerprint: 'fingerprint-1',
+      body: { kind: 'message', role: 'user', blocks: [{ type: 'text', text: 'write a poem' }] },
+      fence: 1
+    })
+
+    feed.publish(SESSION)
+    expect(events.at(-1)).toEqual({
+      type: 'status',
+      session: expect.objectContaining({ status: 'working' })
+    })
+
+    await journal.resolveDispatch({
+      clientMessageId: 'client-1',
+      state: 'accepted',
+      providerIdentity: USER_IDENTITY,
+      fence: 1
+    })
+    feed.publish(SESSION)
+    expect(events.at(-1)).toEqual({
+      type: 'status',
+      session: expect.objectContaining({ status: 'idle' })
+    })
+  })
+
   it('publishes working, then idle once the running marker is tombstoned, and never a repeat', async () => {
     const journal = await openJournal()
     const { feed, events } = feedFor(new Map([[SESSION, { journal }]]))

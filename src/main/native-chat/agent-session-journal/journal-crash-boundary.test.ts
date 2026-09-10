@@ -110,6 +110,8 @@ describe('crash between provider accept and journal commit', () => {
     expect(restarted.pendingSubmissions().map((entry) => entry.clientMessageId)).toEqual(['cm_1'])
     await restarted.markPendingSubmissionsUnknown(2)
     expect(restarted.submissions()[0]?.dispatchState).toBe('unknown')
+    // Marks the send as outlived by its writer, so no reader reports it as still working.
+    expect(restarted.submissions()[0]?.recovered).toBe(true)
 
     const [outcome] = reconcileSubmissions({
       submissions: restarted.submissions(),

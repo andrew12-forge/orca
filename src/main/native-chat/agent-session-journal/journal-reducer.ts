@@ -260,6 +260,9 @@ function applyDispatch(
   submission.providerItemId = row.providerItemId
   submission.reason = row.reason
   submission.resolvedAt = row.ts
+  if (row.recovered) {
+    submission.recovered = row.recovered
+  }
   if (row.state !== 'accepted' || !row.providerItemId) {
     return
   }
