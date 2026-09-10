@@ -6,6 +6,8 @@ import Database from '../../sqlite/sync-database'
 import { OrchestrationDb } from './db'
 
 function assertTargetedRelease(db: OrchestrationDb): void {
+  const message = db.insertMessage({ from: 'sender', to: 'recipient', subject: 'plan probe' })
+  db.stageMailboxPointerEnter([message.id], { ptyId: 'absent-pty', processIncarnation: 'probe' })
   const prepare = vi.spyOn(db.db, 'prepare')
   db.releasePendingMailboxPointerForPty('absent-pty')
   const sql = prepare.mock.calls.find(([query]) => query.startsWith('UPDATE messages'))?.[0]

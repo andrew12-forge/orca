@@ -7,10 +7,18 @@ import {
 import type { OrchestrationMailboxLeaf } from './mailbox-owner'
 import {
   OrchestrationMailboxPointerState,
+  getMailboxPointerFlightDb,
   type OrchestrationMailboxDeliveryFlight
 } from './mailbox-pointer-state'
 import { resumePendingOrchestrationMailboxPointer } from './mailbox-pointer-resume'
 import { stageOrchestrationMailboxPointer } from './mailbox-pointer-stage'
+import { MailboxPointerRecovery } from './mailbox-pointer-recovery'
+import {
+  MAILBOX_POINTER_ENTER_ATTEMPTED,
+  MAILBOX_POINTER_RESERVED,
+  MAILBOX_POINTER_WRITE_ATTEMPTED
+} from './db/messages/mailbox-pointer-enter-state'
+import type { OrchestrationDb } from './db'
 
 export type { OrchestrationMessageWaiter } from './mailbox-pointer-eligibility'
 
@@ -26,7 +34,14 @@ function pointerEnterDelayMs(): number {
 export class OrchestrationMailboxPointerDelivery<TWaiter extends OrchestrationMessageWaiter> {
   private readonly state = new OrchestrationMailboxPointerState()
   private readonly coldParkedPtys = new Set<string>()
-  constructor(private readonly deps: PointerDeliveryDependencies<TWaiter>) {}
+  private readonly recovery: MailboxPointerRecovery<TWaiter>
+  constructor(private readonly deps: PointerDeliveryDependencies<TWaiter>) {
+    this.recovery = new MailboxPointerRecovery(deps, this.state)
+  }
+
+  attachDatabase(db: OrchestrationDb | null): void {
+    this.recovery.attach(db)
+  }
 
   deliverForHandle(handle: string, reservedTypes?: ReadonlySet<string>): void {
     const terminalHandle = this.deps.deliveryTarget.resolveTerminalHandle(handle)
@@ -56,6 +71,7 @@ export class OrchestrationMailboxPointerDelivery<TWaiter extends OrchestrationMe
     }
   ): void {
     const db = this.deps.getDb()
+    this.attachDatabase(db)
     const mailboxHandle = options.mailboxHandle
     if (!db || (!mailboxHandle.startsWith('run:') && !mailboxHandle.startsWith('dispatch:'))) {
       return
@@ -163,7 +179,21 @@ export class OrchestrationMailboxPointerDelivery<TWaiter extends OrchestrationMe
       clearTimeout(flight.enterTimer)
     }
     if (flight?.stagedMessageIds.length) {
-      this.deps.getDb()?.markAsUndelivered(flight.stagedMessageIds)
+      const db = getMailboxPointerFlightDb(flight, this.deps.getDb)
+      if (db && flight.reservation) {
+        const target = { ptyId, processIncarnation: flight.reservation.processIncarnation }
+        // Why: the Enter timer was just cleared, so a reserved or merely-written pointer provably
+        // never submitted and has to stay redeliverable; only an attempted Enter is ambiguous.
+        db.releaseMailboxPointerEnter(flight.stagedMessageIds, target, [
+          MAILBOX_POINTER_RESERVED,
+          MAILBOX_POINTER_WRITE_ATTEMPTED
+        ])
+        db.settleMailboxPointerEnter(flight.stagedMessageIds, target, [
+          MAILBOX_POINTER_ENTER_ATTEMPTED
+        ])
+      } else {
+        this.deps.getDb()?.markAsUndelivered(flight.stagedMessageIds)
+      }
     }
     for (const mailboxHandle of releasedMailboxes) {
       this.redrive(mailboxHandle, true)
@@ -172,15 +202,16 @@ export class OrchestrationMailboxPointerDelivery<TWaiter extends OrchestrationMe
 
   observeAgentWorking(ptyId: string): void {
     try {
+      this.attachDatabase(this.deps.getDb())
       // Staged pointer text is already queued in the composer; working is queue-safe.
-      if (this.state.hasFlight(ptyId)) {
+      if (this.state.observeWorkingFlight(ptyId)) {
         if (this.coldParkedPtys.has(ptyId)) {
           this.state.deferFlightUntilIdle(ptyId)
         }
         return
       }
       this.retirePty(ptyId)
-      this.deps.getDb()?.releasePendingMailboxPointerForPty(ptyId)
+      this.recovery.observeWorking(ptyId)
     } catch {
       // Runtime teardown can close the DB before the final PTY frame is drained.
     }
@@ -217,7 +248,24 @@ export class OrchestrationMailboxPointerDelivery<TWaiter extends OrchestrationMe
   }
 
   private settle(ptyId: string, flight: OrchestrationMailboxDeliveryFlight): void {
+    if (!this.state.isCurrentFlight(ptyId, flight)) {
+      return
+    }
     const parked = this.state.settleFlight(ptyId, flight)
+    if (flight.reservation && !getMailboxPointerFlightDb(flight, this.deps.getDb)) {
+      // Why: a swapped database strands this flight, so parked mailboxes need an explicit redrive.
+      for (const mailboxHandle of this.state.retirePty(ptyId).releasedMailboxes) {
+        this.redrive(mailboxHandle, true)
+      }
+      return
+    }
+    if (flight.workingObserved && flight.reservation) {
+      try {
+        this.recovery.settle(ptyId, flight.stagedMessageIds, flight.reservation.processIncarnation)
+      } catch {
+        // A later observation retries durable recovery after an ambiguous settlement.
+      }
+    }
     if (!parked) {
       return
     }
