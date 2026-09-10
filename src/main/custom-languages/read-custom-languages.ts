@@ -137,8 +137,15 @@ export async function readCustomLanguages(
     for (const raw of config.languages) {
       await attempt('Custom language', async () => {
         const entry = directLanguageSchema.parse(raw)
+        const previousBytes = totalBytes
         const scopeName = await addGrammar(await resolveResource(entry.grammar), entry.scopeName)
-        await addLanguage(entry, scopeName, resolveResource)
+        try {
+          await addLanguage(entry, scopeName, resolveResource)
+        } catch (error) {
+          grammars.delete(scopeName)
+          totalBytes = previousBytes
+          throw error
+        }
       })
     }
   })

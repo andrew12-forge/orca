@@ -88,6 +88,59 @@ describe('readCustomLanguages', () => {
     expect(result.diagnostics).toHaveLength(1)
   })
 
+  it('releases the scope and byte budget when direct configuration fails', async () => {
+    await json('retry.json', { ...grammar('source.retry'), padding: ' '.repeat(4 * 1024 * 1024) })
+    await writeFile(join(dir, 'invalid-config.json'), '{ invalid')
+    await json('languages.json', {
+      languages: [
+        ...Array.from({ length: 4 }, () => ({
+          id: 'retry',
+          grammar: './retry.json',
+          configuration: './invalid-config.json'
+        })),
+        { id: 'retry', grammar: './retry.json', extensions: ['.retry'] }
+      ]
+    })
+    const result = await readCustomLanguages(join(dir, 'languages.json'))
+    expect(result.diagnostics).toHaveLength(4)
+    expect(result.diagnostics.every((message) => message.includes('Invalid JSON'))).toBe(true)
+    expect(result.languages.map((language) => language.id)).toEqual(['retry'])
+    expect(Object.keys(result.grammars)).toEqual(['source.retry'])
+  })
+
+  it('releases a rejected duplicate language grammar without changing the existing language', async () => {
+    await extension()
+    await json('retry.json', grammar('source.retry'))
+    await json('languages.json', {
+      extensions: ['./extension'],
+      languages: [
+        { id: 'ExampleLang', grammar: './retry.json' },
+        { id: 'retry', grammar: './retry.json', extensions: ['.retry'] }
+      ]
+    })
+    const result = await readCustomLanguages(join(dir, 'languages.json'))
+    expect(result.diagnostics).toEqual(['Custom language: Duplicate language id ExampleLang'])
+    expect(result.languages.map((language) => language.id)).toEqual(['ExampleLang', 'retry'])
+    expect(Object.keys(result.grammars)).toEqual(['source.examplelang', 'source.retry'])
+  })
+
+  it('rejects extension grammar paths outside the extension directory', async () => {
+    await extension()
+    await json('outside.json', grammar('source.examplelang'))
+    await json('extension/package.json', {
+      contributes: {
+        languages: [{ id: 'ExampleLang', extensions: ['.examplelang'] }],
+        grammars: [
+          { language: 'ExampleLang', scopeName: 'source.examplelang', path: '../outside.json' }
+        ]
+      }
+    })
+    await json('languages.json', { extensions: ['./extension'] })
+    const result = await readCustomLanguages(join(dir, 'languages.json'))
+    expect(result.languages).toEqual([])
+    expect(result.diagnostics[0]).toContain('escapes its directory')
+  })
+
   it('reports malformed JSON and scope mismatches without throwing', async () => {
     await writeFile(join(dir, 'languages.json'), '{ nope')
     expect((await readCustomLanguages(join(dir, 'languages.json'))).diagnostics[0]).toContain(
@@ -102,16 +155,19 @@ describe('readCustomLanguages', () => {
     expect(result.diagnostics[0]).toContain('Expected scope source.expected, found source.actual')
   })
 
-  it('rejects extension resources that escape through symlinks', async () => {
-    await extension()
-    await rm(join(dir, 'extension/examplelang.json'))
-    await json('outside.json', grammar('source.examplelang'))
-    await symlink(join(dir, 'outside.json'), join(dir, 'extension/examplelang.json'))
-    await json('languages.json', { extensions: ['./extension'] })
-    const result = await readCustomLanguages(join(dir, 'languages.json'))
-    expect(result.languages).toEqual([])
-    expect(result.diagnostics[0]).toContain('escapes its directory')
-  })
+  it.skipIf(process.platform === 'win32')(
+    'rejects extension resources that escape through symlinks',
+    async () => {
+      await extension()
+      await rm(join(dir, 'extension/examplelang.json'))
+      await json('outside.json', grammar('source.examplelang'))
+      await symlink(join(dir, 'outside.json'), join(dir, 'extension/examplelang.json'))
+      await json('languages.json', { extensions: ['./extension'] })
+      const result = await readCustomLanguages(join(dir, 'languages.json'))
+      expect(result.languages).toEqual([])
+      expect(result.diagnostics[0]).toContain('escapes its directory')
+    }
+  )
 
   it('reports duplicate scopes and preserves the first grammar', async () => {
     await json('first.json', grammar('source.same'))
