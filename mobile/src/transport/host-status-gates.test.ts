@@ -22,6 +22,8 @@ describe('useHostStatusGates', () => {
     const newSendRequest = vi.fn().mockResolvedValue({
       ok: true,
       result: {
+        protocolVersion: 3,
+        minCompatibleMobileVersion: 3,
         capabilities: ['terminal.quick-commands.v1'],
         floatingWorkspaceEnabled: true
       }
@@ -51,7 +53,7 @@ describe('useHostStatusGates', () => {
       expect(firstRenderByHost.get('host-2')).toMatchObject({
         hostCapabilities: [],
         floatingWorkspaceEnabled: false,
-        compatVerdict: { kind: 'ok' }
+        compatVerdict: { kind: 'unknown' }
       })
       expect(gates).toMatchObject({
         hostCapabilities: ['terminal.quick-commands.v1'],
@@ -62,6 +64,8 @@ describe('useHostStatusGates', () => {
         resolveOldStatus?.({
           ok: true,
           result: {
+            protocolVersion: 3,
+            minCompatibleMobileVersion: 3,
             capabilities: ['browser.screencast.v1'],
             floatingWorkspaceEnabled: true
           }
@@ -83,6 +87,8 @@ describe('useHostStatusGates', () => {
     const sendRequest = vi.fn().mockResolvedValue({
       ok: true,
       result: {
+        protocolVersion: 3,
+        minCompatibleMobileVersion: 3,
         appVersion: '1.4.191',
         capabilities: ['browser.screencast.v1'],
         floatingWorkspaceEnabled: true
@@ -124,7 +130,12 @@ describe('useHostStatusGates', () => {
       .fn()
       .mockResolvedValueOnce({
         ok: true,
-        result: { capabilities: ['browser.screencast.v1'], floatingWorkspaceEnabled: true }
+        result: {
+          protocolVersion: 3,
+          minCompatibleMobileVersion: 3,
+          capabilities: ['browser.screencast.v1'],
+          floatingWorkspaceEnabled: true
+        }
       })
       .mockReturnValueOnce(pendingReconnect)
     const client = { sendRequest } as unknown as RpcClient
@@ -165,7 +176,12 @@ describe('useHostStatusGates', () => {
       await act(async () => {
         resolveReconnect?.({
           ok: true,
-          result: { capabilities: ['terminal.quick-commands.v1'], floatingWorkspaceEnabled: true }
+          result: {
+            protocolVersion: 3,
+            minCompatibleMobileVersion: 3,
+            capabilities: ['terminal.quick-commands.v1'],
+            floatingWorkspaceEnabled: true
+          }
         })
         await pendingReconnect
       })
@@ -183,7 +199,12 @@ describe('useHostStatusGates', () => {
     const firstClient = {
       sendRequest: vi.fn().mockResolvedValue({
         ok: true,
-        result: { capabilities: ['browser.screencast.v1'], floatingWorkspaceEnabled: true }
+        result: {
+          protocolVersion: 3,
+          minCompatibleMobileVersion: 3,
+          capabilities: ['browser.screencast.v1'],
+          floatingWorkspaceEnabled: true
+        }
       })
     } as unknown as RpcClient
     const secondClient = {

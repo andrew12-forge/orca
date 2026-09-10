@@ -34,8 +34,8 @@ describe('OrcaRuntimeService', () => {
     const runtime = createRuntime()
 
     const status = runtime.getStatus()
-    expect(typeof status.runtimeProtocolVersion).toBe('number')
-    expect(typeof status.minCompatibleRuntimeClientVersion).toBe('number')
+    expect(status.runtimeProtocolVersion).toBe(3)
+    expect(status.minCompatibleRuntimeClientVersion).toBe(3)
     expect(status.runtimeProtocolVersion).toBe(status.protocolVersion)
     expect(status.minCompatibleRuntimeClientVersion).toBe(status.minCompatibleMobileVersion)
     expect(status.capabilities).toContain('terminal.binary-stream.v1')

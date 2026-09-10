@@ -1,12 +1,10 @@
-// Why: this file mirrors src/shared/protocol-compat.ts (which is
-// covered by CI vitest). Metro can't resolve out of mobile/, so the
-// pure function is duplicated here. Keep the two files in sync — when
-// you change the evaluator's logic, update both. The src/shared/ copy
-// is the tested canonical version.
+// evaluateCompat mirrors the shared evaluator; the mobile status probe additionally
+// distinguishes unreadable status from a verified version mismatch.
 import { MIN_COMPATIBLE_DESKTOP_VERSION, MOBILE_PROTOCOL_VERSION } from './protocol-version'
 
 export type CompatVerdict =
   | { kind: 'ok' }
+  | { kind: 'unknown' }
   | {
       kind: 'blocked'
       reason: 'mobile-too-old' | 'desktop-too-old'
@@ -39,4 +37,27 @@ export function evaluateCompat(input: {
     }
   }
   return { kind: 'ok' }
+}
+
+export function readHostProtocolVerdict(status: unknown): CompatVerdict {
+  if (!status || typeof status !== 'object' || Array.isArray(status)) {
+    return { kind: 'unknown' }
+  }
+  const fields = status as Record<string, unknown>
+  const version = fields.protocolVersion
+  const minimum = fields.minCompatibleMobileVersion
+  if (
+    typeof version !== 'number' ||
+    !Number.isSafeInteger(version) ||
+    version < 0 ||
+    typeof minimum !== 'number' ||
+    !Number.isSafeInteger(minimum) ||
+    minimum < 0
+  ) {
+    return { kind: 'unknown' }
+  }
+  return evaluateCompat({
+    desktopProtocolVersion: version,
+    desktopMinCompatibleMobileVersion: minimum
+  })
 }

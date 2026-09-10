@@ -26,20 +26,24 @@ export function HostProtocolGate({ hostId, children }: Props) {
   const { client, state } = useHostClient(hostId)
   const gates = useHostStatusGates({ hostId, client, connState: state })
   const { compatVerdict, statusPending } = gates
-  const resolvedHostIdRef = useRef<string | null>(null)
   const mountedHostIdRef = useRef<string | null>(null)
   const hostKey = hostId ?? null
-  const resolvedNow = state === 'connected' && client !== null && !statusPending
   const blocked = compatVerdict.kind === 'blocked'
-  const pending = statusPending && resolvedHostIdRef.current !== hostKey
+  const pending = compatVerdict.kind === 'unknown' && state === 'connected' && client !== null
+  const recovery =
+    pending && !statusPending ? (
+      <ProtocolBlockScreen verdict={{ kind: 'unknown' }} onRetry={gates.retryStatus} />
+    ) : (
+      <ActivityIndicator
+        color={colors.textSecondary}
+        accessibilityLabel="Checking host compatibility"
+      />
+    )
   const holdBack = pending && mountedHostIdRef.current !== hostKey
 
   // Why: React can replay or discard a render, so the latches record committed
   // outcomes only — a discarded children render must not count as mounted.
   useEffect(() => {
-    if (resolvedNow) {
-      resolvedHostIdRef.current = hostKey
-    }
     if (blocked) {
       // Why: the block screen unmounts the routes, so a later pending window
       // must not assume a live tree it can overlay.
@@ -52,14 +56,7 @@ export function HostProtocolGate({ hostId, children }: Props) {
   if (holdBack) {
     // Why: nothing is mounted yet for this host, so hold the routes back entirely
     // rather than letting them mount (and fire their connect RPCs) pre-verdict.
-    return (
-      <View style={styles.pending}>
-        <ActivityIndicator
-          color={colors.textSecondary}
-          accessibilityLabel="Checking host compatibility"
-        />
-      </View>
-    )
+    return <View style={styles.pending}>{recovery}</View>
   }
   if (blocked) {
     return <ProtocolBlockScreen verdict={compatVerdict} />
@@ -77,10 +74,7 @@ export function HostProtocolGate({ hostId, children }: Props) {
           {children}
         </View>
         {pending ? (
-          // Why: once the stack is mounted, unmounting it for a pending status.get destroys
-          // in-flight nested navigation, so cover it instead. Mount effects underneath still
-          // run — they wait for connState 'connected' and every capability-dependent call
-          // re-probes status.get itself, so nothing newer than the baseline fires here.
+          // Preserve nested navigation; the logical client's admission gate fences mounted effects.
           <View
             style={styles.pendingOverlay}
             // Why: the fill owns the hit test for in-tree views only — native-Modal-hosted
@@ -88,10 +82,7 @@ export function HostProtocolGate({ hostId, children }: Props) {
             pointerEvents="auto"
             accessibilityViewIsModal
           >
-            <ActivityIndicator
-              color={colors.textSecondary}
-              accessibilityLabel="Checking host compatibility"
-            />
+            {recovery}
           </View>
         ) : null}
       </View>

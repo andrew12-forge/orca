@@ -31,9 +31,13 @@ export { SKILL_INSTALL_RESULT_V2_CAPABILITY } from './skill-install-capability'
 // this client build requires a newer server. Exact app-version equality is
 // never required; these numbers define the supported compatibility window.
 
+// Support retirement (2026-09-09): desktop <= v1.4.4 and mobile <= v0.0.7
+// use protocol 2 and are retired. Protocol 3 starts at desktop v1.4.5,
+// mobile-v0.0.8, mobile-ios-v0.0.15, and mobile-android-v0.0.14.
+// Advance all three minimums together after reviewing the affected releases.
 export const RUNTIME_PROTOCOL_VERSION = 3
-export const MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION = 2
-export const MIN_COMPATIBLE_RUNTIME_SERVER_VERSION = 2
+export const MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION = 3
+export const MIN_COMPATIBLE_RUNTIME_SERVER_VERSION = 3
 
 export const PROJECT_HOST_SETUP_RUNTIME_CAPABILITY = 'project-host-setup.v1' as const
 export const TASK_SOURCE_CONTEXT_RUNTIME_CAPABILITY = 'task-source-context.v1' as const

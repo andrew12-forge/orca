@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import type { RpcClient } from './rpc-client'
-import type { ConnectionState, RpcSuccess } from './types'
-import { evaluateCompat, type CompatVerdict } from './protocol-compat'
+import type { ConnectionState } from './types'
 import type { DesktopStatus } from '../worktree/host-worktree-rpc-types'
+import { readHostProtocolVerdict, type CompatVerdict } from './protocol-compat'
 import { normalizeHostAppVersion, recordHostAppVersion } from './host-app-version-store'
+import type { StableLogicalRpcClient } from './stable-logical-rpc-client'
 
 export type HostStatusGates = {
   hostCapabilities: string[]
@@ -11,18 +12,18 @@ export type HostStatusGates = {
   desktopAppVersion: string | null
   compatVerdict: CompatVerdict
   statusPending: boolean
+  retryStatus: () => void
 }
 
-// statusPending is not stored: pending-ness belongs to the live connection, not to the answer.
-type LoadedHostStatusGates = Omit<HostStatusGates, 'statusPending'> & {
+type LoadedHostStatusGates = Omit<HostStatusGates, 'statusPending' | 'retryStatus'> & {
   hostId: string | undefined
   client: RpcClient
+  generation: number
 }
 
 const EMPTY_HOST_CAPABILITIES: string[] = []
+const STATUS_RETRY_DELAYS = [1_000, 2_000, 4_000]
 
-// Reads status.get on connect for capabilities, protocol-compat verdict, and the
-// floating-workspace flag. Compat constants are wide-open today so this never blocks yet.
 export function useHostStatusGates(args: {
   hostId: string | undefined
   client: RpcClient | null
@@ -30,9 +31,18 @@ export function useHostStatusGates(args: {
 }): HostStatusGates {
   const { hostId, client, connState } = args
   const [loaded, setLoaded] = useState<LoadedHostStatusGates | null>(null)
-  // Why (F10): a drop must not erase proven capabilities, but it does invalidate them — this keeps
-  // statusPending true across the reconnect refetch, so gates stay "unknown" while the data survives.
   const [unverified, setUnverified] = useState(false)
+  const [retry, setRetry] = useState(0)
+  const retryStatus = useCallback(() => setRetry((value) => value + 1), [])
+  const readGeneration = useCallback(
+    () => (client as Partial<StableLogicalRpcClient> | null)?.getGeneration?.() ?? 0,
+    [client]
+  )
+  const subscribeGeneration = useCallback(
+    (listener: () => void) => client?.onStateChange?.(listener) ?? (() => {}),
+    [client]
+  )
+  const generation = useSyncExternalStore(subscribeGeneration, readGeneration, readGeneration)
 
   useEffect(() => {
     if (connState !== 'connected' || !client) {
@@ -40,45 +50,70 @@ export function useHostStatusGates(args: {
       return
     }
     let cancelled = false
-    const requestClient = client
-    const settle = (gates: Omit<HostStatusGates, 'statusPending'>) => {
-      setLoaded({ hostId, client: requestClient, ...gates })
+    let cancelRetry = () => {}
+    let attempt = 0
+    const settleUnknown = () => {
+      if (cancelled || generation !== readGeneration()) {
+        return
+      }
       setUnverified(false)
+      setLoaded((previous) => {
+        if (
+          previous !== null &&
+          previous.hostId === hostId &&
+          previous.client === client &&
+          previous.generation === generation
+        ) {
+          return previous
+        }
+        return {
+          hostId,
+          client,
+          generation,
+          hostCapabilities: EMPTY_HOST_CAPABILITIES,
+          floatingWorkspaceEnabled: false,
+          desktopAppVersion: null,
+          compatVerdict: { kind: 'unknown' }
+        }
+      })
+      const delay = STATUS_RETRY_DELAYS[attempt++]
+      if (delay !== undefined) {
+        cancelRetry = scheduleHostStatusRetry(() => void probe(), delay)
+      }
     }
-    void (async () => {
+    const probe = async () => {
+      if (cancelled || generation !== readGeneration()) {
+        return
+      }
+      setUnverified(true)
       try {
-        const response = await requestClient.sendRequest('status.get')
-        if (cancelled) {
+        const response = await client.sendRequest('status.get', undefined, { timeoutMs: 8_000 })
+        if (cancelled || generation !== readGeneration()) {
           return
         }
-        if (!response.ok) {
-          settle({
-            hostCapabilities: [],
-            floatingWorkspaceEnabled: false,
-            desktopAppVersion: null,
-            compatVerdict: { kind: 'ok' }
-          })
+        const verdict = response.ok
+          ? readHostProtocolVerdict(response.result)
+          : { kind: 'unknown' as const }
+        if (verdict.kind === 'unknown' || !response.ok) {
+          settleUnknown()
           return
         }
-        const status = (response as RpcSuccess).result as DesktopStatus & {
-          capabilities?: string[]
-        }
-        const verdict = evaluateCompat({
-          desktopProtocolVersion: status.protocolVersion,
-          desktopMinCompatibleMobileVersion: status.minCompatibleMobileVersion
-        })
+        const status = response.result as DesktopStatus & { capabilities?: string[] }
         const desktopAppVersion = normalizeHostAppVersion(status.appVersion)
         if (hostId && desktopAppVersion) {
           void recordHostAppVersion(hostId, desktopAppVersion)
         }
-        settle({
-          hostCapabilities: status.capabilities ?? [],
+        setLoaded({
+          hostId,
+          client,
+          generation,
+          hostCapabilities: status.capabilities ?? EMPTY_HOST_CAPABILITIES,
           floatingWorkspaceEnabled: status.floatingWorkspaceEnabled === true,
           desktopAppVersion,
           compatVerdict: verdict
         })
+        setUnverified(false)
         if (verdict.kind === 'blocked') {
-          // Why: support breadcrumb to confirm a block fired vs a render bug; no PII, just version ints.
           console.warn('[protocol-compat] blocked', {
             reason: verdict.reason,
             desktopVersion: verdict.desktopVersion,
@@ -87,31 +122,32 @@ export function useHostStatusGates(args: {
           })
         }
       } catch {
-        // Why: a transient status failure must not trap navigation; conservative feature gates remain disabled.
-        if (!cancelled) {
-          settle({
-            hostCapabilities: [],
-            floatingWorkspaceEnabled: false,
-            desktopAppVersion: null,
-            compatVerdict: { kind: 'ok' }
-          })
-        }
+        settleUnknown()
       }
-    })()
+    }
+    void probe()
     return () => {
       cancelled = true
+      cancelRetry()
     }
-  }, [client, connState, hostId])
+  }, [client, connState, hostId, generation, readGeneration, retry])
 
-  // Why: effects run after render, so key loaded gates by host and client to fail closed during route reuse.
-  const proven = loaded && loaded.hostId === hostId && loaded.client === client ? loaded : null
+  // A logical client survives cutover; its generation fences even a same-host late reply.
+  const proven =
+    loaded &&
+    loaded.hostId === hostId &&
+    loaded.client === client &&
+    loaded.generation === generation
+      ? loaded
+      : null
   if (!proven) {
     return {
       hostCapabilities: EMPTY_HOST_CAPABILITIES,
       floatingWorkspaceEnabled: false,
       desktopAppVersion: null,
-      compatVerdict: { kind: 'ok' },
-      statusPending: connState === 'connected' && client !== null
+      compatVerdict: { kind: 'unknown' },
+      statusPending: connState === 'connected' && client !== null,
+      retryStatus
     }
   }
   return {
@@ -119,8 +155,13 @@ export function useHostStatusGates(args: {
     floatingWorkspaceEnabled: proven.floatingWorkspaceEnabled,
     desktopAppVersion: proven.desktopAppVersion,
     compatVerdict: proven.compatVerdict,
-    // Why (F10): unchanged pending timing — the reconnect refetch is still "unknown", it just no
-    // longer blanks the capabilities this same host already proved.
-    statusPending: connState === 'connected' && unverified
+    // Proven capabilities and navigation survive a transient same-generation reconnect.
+    statusPending: connState === 'connected' && unverified,
+    retryStatus
   }
+}
+
+function scheduleHostStatusRetry(probe: () => void, delay: number): () => void {
+  const timer = setTimeout(probe, delay)
+  return () => clearTimeout(timer)
 }

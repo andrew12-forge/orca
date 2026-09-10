@@ -1,3 +1,4 @@
+import { HostProtocolAdmission } from './host-protocol-admission'
 import { AppState, Platform } from 'react-native'
 import { connect, type RpcClient } from './rpc-client'
 import { createStableLogicalRpcClient } from './stable-logical-rpc-client'
@@ -10,7 +11,8 @@ export function openHostLogicalClient(host: HostProfile, onLog: ConnectionLogSin
   // direct socket remains a replaceable first physical generation.
   const logical = createStableLogicalRpcClient(
     connect(host.endpoint, host.deviceToken, host.publicKeyB64, { onLog }),
-    directPathForEndpoint(host, host.endpoint)
+    directPathForEndpoint(host, host.endpoint),
+    new HostProtocolAdmission()
   )
   if (Platform.OS === 'web') {
     return logical

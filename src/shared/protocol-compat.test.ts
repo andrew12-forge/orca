@@ -156,6 +156,27 @@ describe('evaluateCompat', () => {
 })
 
 describe('evaluateRuntimeCompat', () => {
+  it('retires protocol 2 in both directions', () => {
+    expect(MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION).toBe(3)
+    expect(MIN_COMPATIBLE_RUNTIME_SERVER_VERSION).toBe(3)
+    expect(
+      evaluateRuntimeCompat({
+        clientProtocolVersion: 2,
+        minCompatibleServerProtocolVersion: 2,
+        serverProtocolVersion: RUNTIME_PROTOCOL_VERSION,
+        serverMinCompatibleClientProtocolVersion: MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION
+      })
+    ).toMatchObject({ kind: 'blocked', reason: 'client-too-old' })
+    expect(
+      evaluateRuntimeCompat({
+        clientProtocolVersion: RUNTIME_PROTOCOL_VERSION,
+        minCompatibleServerProtocolVersion: MIN_COMPATIBLE_RUNTIME_SERVER_VERSION,
+        serverProtocolVersion: 2,
+        serverMinCompatibleClientProtocolVersion: 2
+      })
+    ).toMatchObject({ kind: 'blocked', reason: 'server-too-old' })
+  })
+
   it('keeps the current client and current server self-compatible', () => {
     const verdict = evaluateRuntimeCompat({
       clientProtocolVersion: RUNTIME_PROTOCOL_VERSION,

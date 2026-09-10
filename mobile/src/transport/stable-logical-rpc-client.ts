@@ -1,5 +1,6 @@
 import type { ConnectionState, RpcResponse } from './types'
 import type { RpcClient } from './rpc-client'
+import type { HostProtocolAdmission } from './host-protocol-admission'
 import {
   forwardMigrationDialState,
   type MigrationDialStateForwarder
@@ -65,7 +66,8 @@ export type StableLogicalRpcClient = RpcClient & {
 
 export function createStableLogicalRpcClient(
   initialSession: RpcClient,
-  initialPath: MobileConnectionPath
+  initialPath: MobileConnectionPath,
+  admission?: HostProtocolAdmission
 ): StableLogicalRpcClient {
   let activeSession = initialSession
   let activePath = initialPath
@@ -90,6 +92,9 @@ export function createStableLogicalRpcClient(
       if (suspended) {
         return Promise.reject(new Error('Client suspended'))
       }
+      if (admission && !admission.allows(method)) {
+        return Promise.reject(new Error('Host compatibility has not been verified'))
+      }
       const requestGeneration = generation
       const session = activeSession
       return new Promise<RpcResponse>((resolve, reject) => {
@@ -105,6 +110,17 @@ export function createStableLogicalRpcClient(
               } else if (requestGeneration !== generation) {
                 reject(new LogicalClientCutoverError())
               } else {
+                if (method === 'status.get' && admission) {
+                  admission.observe(response)
+                  for (const record of subscriptions.values()) {
+                    if (!admission.allows(record.method)) {
+                      record.disposePhysical?.()
+                      record.disposePhysical = null
+                    } else if (!record.disposePhysical && !suspended) {
+                      attachSubscription(record, activeSession, generation)
+                    }
+                  }
+                }
                 resolve(response)
               }
             },
@@ -155,7 +171,7 @@ export function createStableLogicalRpcClient(
           record.params = { ...record.params, viewport }
         }
       }
-      if (!suspended) {
+      if (!suspended && (!admission || admission.allows('terminal.subscribe'))) {
         activeSession.updateTerminalSubscriptionViewport(terminal, viewport)
       }
     },
@@ -251,6 +267,7 @@ export function createStableLogicalRpcClient(
       const previous = activeSession
       const previousStateUnsubscribe = activeStateUnsubscribe
       const nextGeneration = generation + 1
+      admission?.reset()
 
       // Why: replay on the authenticated replacement before closing the old
       // session, but fence callbacks until the generation becomes current.
@@ -310,6 +327,10 @@ export function createStableLogicalRpcClient(
     session: RpcClient,
     subscriptionGeneration: number
   ): void {
+    if (admission && !admission.allows(record.method)) {
+      record.disposePhysical = null
+      return
+    }
     record.disposePhysical = session.subscribe(
       record.method,
       record.params,

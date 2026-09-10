@@ -7,11 +7,13 @@ const RELEASES_URL = 'https://github.com/stablyai/orca/releases'
 const IOS_APP_STORE_URL = 'itms-apps://apps.apple.com/app/orca-ide/id6766130217'
 
 type Props = {
-  verdict: Extract<CompatVerdict, { kind: 'blocked' }>
+  verdict: Extract<CompatVerdict, { kind: 'blocked' | 'unknown' }>
+  onRetry?: () => void
 }
 
-export function ProtocolBlockScreen({ verdict }: Props) {
-  const isMobileTooOld = verdict.reason === 'mobile-too-old'
+export function ProtocolBlockScreen({ verdict, onRetry }: Props) {
+  const unknown = verdict.kind === 'unknown'
+  const isMobileTooOld = verdict.kind === 'blocked' && verdict.reason === 'mobile-too-old'
   // Why: Android APKs ship through GitHub Releases until a Play Store listing exists.
   const mobileUpdateTarget =
     Platform.OS === 'ios'
@@ -21,10 +23,16 @@ export function ProtocolBlockScreen({ verdict }: Props) {
     ? { label: mobileUpdateTarget.label, url: mobileUpdateTarget.url }
     : { label: 'Open GitHub Releases', url: RELEASES_URL }
 
-  const title = isMobileTooOld ? 'Update Orca Mobile' : 'Update Orca on your computer'
-  const body = isMobileTooOld
-    ? `This desktop needs a newer Orca Mobile app. Update Orca Mobile from ${mobileUpdateTarget.storeName}, then try this host again.`
-    : 'This paired desktop app is too old for your current Orca Mobile app. Update Orca on your computer, then try this host again.'
+  const title = unknown
+    ? 'Unable to verify this host'
+    : isMobileTooOld
+      ? 'Update Orca Mobile'
+      : 'Update Orca on your computer'
+  const body = unknown
+    ? 'Orca could not check this host’s compatibility. Retry the connection or choose another host.'
+    : isMobileTooOld
+      ? `This desktop needs a newer Orca Mobile app. Update Orca Mobile from ${mobileUpdateTarget.storeName}, then try this host again.`
+      : 'This paired desktop app is too old for your current Orca Mobile app. Update Orca on your computer, then try this host again.'
   const recoveryNote =
     'Already updated? Go back to Hosts and refresh the connection. If this message stays, remove this host and pair it again.'
 
@@ -36,10 +44,14 @@ export function ProtocolBlockScreen({ verdict }: Props) {
         <Pressable
           style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
           onPress={() => {
-            void Linking.openURL(primaryAction.url)
+            if (unknown) {
+              onRetry?.()
+            } else {
+              void Linking.openURL(primaryAction.url)
+            }
           }}
         >
-          <Text style={styles.primaryButtonText}>{primaryAction.label}</Text>
+          <Text style={styles.primaryButtonText}>{unknown ? 'Retry' : primaryAction.label}</Text>
         </Pressable>
         <Pressable
           style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
@@ -51,7 +63,7 @@ export function ProtocolBlockScreen({ verdict }: Props) {
         >
           <Text style={styles.secondaryButtonText}>Back to hosts</Text>
         </Pressable>
-        <Text style={styles.recoveryNote}>{recoveryNote}</Text>
+        {!unknown ? <Text style={styles.recoveryNote}>{recoveryNote}</Text> : null}
       </View>
     </View>
   )
@@ -60,6 +72,7 @@ export function ProtocolBlockScreen({ verdict }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    width: '100%',
     backgroundColor: colors.bgBase,
     justifyContent: 'center',
     paddingHorizontal: spacing.lg

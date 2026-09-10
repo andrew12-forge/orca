@@ -370,7 +370,7 @@ describe('agent session RPC methods', () => {
 
   it('advertises the capability without moving the mixed-version protocol fence', () => {
     expect(RUNTIME_PROTOCOL_VERSION).toBe(3)
-    expect(MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION).toBe(2)
+    expect(MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION).toBe(3)
     expect(RUNTIME_CAPABILITIES).toContain(AGENT_SESSION_HOST_AUTHORITY_RUNTIME_CAPABILITY)
     expect(RUNTIME_CAPABILITIES).toContain(AGENT_SESSION_OMP_RESUME_PATH_RUNTIME_CAPABILITY)
   })

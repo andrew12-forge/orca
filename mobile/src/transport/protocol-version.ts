@@ -16,5 +16,9 @@
 // server feature added at a specific runtime protocol version. This
 // triggers a hard-block screen for users paired to older servers.
 
+// Support retirement (2026-09-09): desktop <= v1.4.4 and mobile <= v0.0.7
+// use protocol 2 and are retired. Protocol 3 starts at desktop v1.4.5,
+// mobile-v0.0.8, mobile-ios-v0.0.15, and mobile-android-v0.0.14.
+// Advance all three minimums together after reviewing the affected releases.
 export const MOBILE_PROTOCOL_VERSION = 3
-export const MIN_COMPATIBLE_DESKTOP_VERSION = 2
+export const MIN_COMPATIBLE_DESKTOP_VERSION = 3
