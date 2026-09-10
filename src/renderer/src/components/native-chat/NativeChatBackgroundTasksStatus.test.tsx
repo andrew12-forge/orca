@@ -171,6 +171,43 @@ describe('background-tasks strip header', () => {
   })
 })
 
+describe('background-task row reasons', () => {
+  function expandedRows(tasks: AgentSessionBackgroundTask[]): HTMLElement[] {
+    render(
+      <NativeChatBackgroundTasksStatus
+        isVisible
+        tasks={tasks}
+        settledTasks={[]}
+        indicatorActive
+        supportsTaskStop={false}
+        supportsStopAll={false}
+        stoppingTaskIds={new Set()}
+        stoppingAll={false}
+        onStop={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    return screen.getAllByRole('listitem')
+  }
+
+  // `unverifiable` is the SSH verdict for "no contact"; a row that hides it reads
+  // like a working child. `blocked` is the same class of loss.
+  it('names the reason on every attention state, not only on waiting', () => {
+    const rows = expandedRows([
+      { id: 'a1', kind: 'agent', description: 'ssh child', state: 'unverifiable' },
+      { id: 'a2', kind: 'agent', description: 'flaky child', state: 'blocked' },
+      { id: 'a3', kind: 'agent', description: 'approval child', state: 'waiting' },
+      { id: 'a4', kind: 'agent', description: 'busy child', state: 'working' }
+    ])
+    expect(rows).toHaveLength(4)
+    expect(rows[0].textContent).toContain('ssh child · no contact')
+    expect(rows[1].textContent).toContain('flaky child · failed')
+    expect(rows[2].textContent).toContain('approval child · needs approval')
+    // A running row has nothing to explain.
+    expect(rows[3].textContent).not.toContain('·')
+  })
+})
+
 it('stops elapsed renders in a hidden pane and catches up on reveal', () => {
   vi.useFakeTimers()
   vi.setSystemTime(100_000)

@@ -71,7 +71,9 @@ function BackgroundTaskRow(props: {
 }): React.JSX.Element {
   const { entry, now } = props
   const Icon = KIND_ICONS[entry.task.kind]
-  const reason = entry.state === 'waiting' ? backgroundTaskStateReason(entry.state) : null
+  // Every attention state states its reason on the row, the same ones the collapsed
+  // header names; `unverifiable` ("no contact") must never be silently dropped.
+  const reason = backgroundTaskStateReason(entry.state)
   // Settled rows keep their final usage but no elapsed — a still-growing clock
   // on finished work would lie.
   const meta = [
@@ -172,7 +174,7 @@ export function NativeChatBackgroundTasksStatus(props: {
                 const kind = segment.kind
                 const Icon = kind ? KIND_ICONS[kind] : null
                 return (
-                  <span key={segment.text}>
+                  <span key={segment.kind ?? 'total'}>
                     {/* A text token, not `--border`: that one is a divider line
                         (7% white in dark) and reads as invisible at this size. */}
                     {index > 0 ? <span className="text-muted-foreground"> · </span> : null}
